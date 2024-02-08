@@ -372,10 +372,11 @@ procedure InitBackEnd(integer c)
 	
 	init_opcodes()
 	transoptions()
-	
+
+--### default to gcc
 	if compiler_type = COMPILER_UNKNOWN then
 		if TWINDOWS then
-			compiler_type = COMPILER_WATCOM
+			compiler_type = COMPILER_GCC
 		elsif TUNIX then
 			compiler_type = COMPILER_GCC
 		end if

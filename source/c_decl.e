@@ -112,7 +112,7 @@ export sequence user_library = ""
 ifdef WINDOWS then
 	sequence cmd=command_line()
 	sequence binpath=pathname(cmd[1])
-	user_library = binpath&"\\"&"eu.lib"
+	user_library = binpath&"\\"&"eu.a"
 end ifdef
 --### EuPortable patching user_library to default to "eu.a" in the bin folder
 
