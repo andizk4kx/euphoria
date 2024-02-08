@@ -465,9 +465,9 @@ procedure WinMain()
 	atom class
 	integer id
 	
-	wndclass = allocate(SIZE_OF_WNDCLASS,1)
-	msg = allocate(SIZE_OF_MESSAGE,1)
-	szAppName = allocate_string("HelloWin",1)
+	wndclass = allocate(SIZE_OF_WNDCLASS)
+	msg = allocate(SIZE_OF_MESSAGE)
+	szAppName = allocate_string("HelloWin")
 	
 	id = routine_id("WndProc")
 	if id = -1 then
@@ -482,7 +482,7 @@ procedure WinMain()
 	hwnd = c_func(CreateWindow, {
 		  0,                     -- extended style
 		  szAppName,             -- window class name
-		  allocate_string("Euphoria Multitasking Demo",1), -- window caption
+		  allocate_string("Euphoria Multitasking Demo"), -- window caption
 		  WS_OVERLAPPEDWINDOW,   -- window style
 		  4, --CW_USEDEFAULT,         -- initial x position
 		  4, --CW_USEDEFAULT,         -- initial y position
@@ -515,7 +515,7 @@ procedure FullMain()
 	t = time()
 	while time() < t + 5 do
 	end while
-	hdc = c_func(CreateDC, {allocate_string("DISPLAY",1), NULL, NULL, NULL})
+	hdc = c_func(CreateDC, {allocate_string("DISPLAY"), NULL, NULL, NULL})
 	if hdc = NULL then
 		crash("CreateDC failed!")
 	end if
