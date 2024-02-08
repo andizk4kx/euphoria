@@ -70,6 +70,14 @@ del_vars = 0
 
 object eub_path = 0
 
+--### EuPortable patching eub_path to default bin dir
+--ifdef WINDOWS then
+	sequence cmd=command_line()
+	sequence binpath=pathname(cmd[1])
+	eub_path = binpath&"\\"&"eubw.exe"
+--end ifdef
+--### EuPortable patching eub_path to default bin dir
+
 procedure fatal(sequence msg)
 -- fatal error during bind
 	puts(2, msg & '\n')

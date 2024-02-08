@@ -60,6 +60,23 @@ sequence
 	cache_delims = {}
 
 sequence config_inc_paths = {}
+
+--### EuPortable patching config_inc_paths to default to the ../include folder
+
+ifdef WINDOWS then
+sequence cmd=command_line()
+sequence binpath=pathname(cmd[1])
+sequence homepath=getenv("HOMEPATH")
+sequence homedrive=getenv("HOMEDRIVE")
+	binpath=split_path(binpath)
+	binpath=remove(binpath,length(binpath))
+	binpath=join_path(binpath)
+	config_inc_paths={binpath&"\\include"&"\\"}
+	config_inc_paths=append(config_inc_paths, homedrive&homepath&"\\euphoria\\include"&"\\")
+end ifdef
+
+--### EuPortable patching config_inc_paths to default to the ../include folder
+
 integer loaded_config_inc_paths = 0
 
 object exe_path_cache = 0

@@ -528,6 +528,13 @@ export integer OpTypeCheck          -- type check option
 export integer OpProfileStatement   -- statement profile option currently on
 export integer OpProfileTime        -- time profile option currently on
 export sequence OpDefines = {}      -- defines
+
+--### EuPortable define EUPORTABLE
+ifdef WINDOWS then
+	OpDefines &= { "EUPORTABLE" }
+end ifdef
+--### EuPortable define EUPORTABLE
+
 export integer OpInline             -- inline max size (0 = off)
 export integer OpIndirectInclude
 

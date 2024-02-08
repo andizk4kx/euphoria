@@ -50,6 +50,19 @@ public sequence all_source = {} -- pointers to chunks
 public integer usage_shown = 0 -- Indicates if the help/usage text has shown yet.
 
 object eudir = 0
+
+--### EuPortable patching eudir to default relativ to the bin dir
+ifdef WINDOWS then
+	sequence cmd=command_line()
+	sequence binpath=pathname(cmd[1])
+
+	binpath=split_path(binpath)
+	binpath=remove(binpath,length(binpath))
+	binpath=join_path(binpath)
+	eudir=binpath
+end ifdef
+--### EuPortable patching eudir to default relativ to the bin dir
+
 integer cmdline_eudir = 0
 
 export function open_locked(sequence file_path)

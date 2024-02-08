@@ -108,6 +108,15 @@ export boolean debug_option = FALSE
 
 export sequence user_library = ""
 
+--### EuPortable patching user_library to default to "eu.a" in the bin folder
+ifdef WINDOWS then
+	sequence cmd=command_line()
+	sequence binpath=pathname(cmd[1])
+	user_library = binpath&"\\"&"eu.lib"
+end ifdef
+--### EuPortable patching user_library to default to "eu.a" in the bin folder
+
+
 --**
 -- If not-empty, then the build file should link against user_pic_library
 -- when building a shared object.  Used for gcc.

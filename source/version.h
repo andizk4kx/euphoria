@@ -17,8 +17,10 @@
 #define MIN_VER 2
 #define PAT_VER 0
 
+#ifdef __GNUC__
+
 #ifndef EREL_TYPE
-#  define REL_TYPE "development"
+#  define REL_TYPE "Portable_App"
 #else
 #  if EREL_TYPE == 1
 #    define REL_TYPE ""
@@ -27,6 +29,22 @@
 #    define STR( S ) #S
 #    define REL_TYPE XSTR( EREL_TYPE )
 #  endif
+#endif
+
+#else
+
+#ifndef EREL_TYPE
+#  define REL_TYPE "Portable_App"
+#else
+#  if EREL_TYPE == 1
+#    define REL_TYPE ""
+#  else
+#    define XSTR( S ) STR( S )
+#    define STR( S ) #S
+#    define REL_TYPE XSTR( EREL_TYPE )
+#  endif
+#endif
+
 #endif
 
 #endif

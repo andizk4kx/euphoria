@@ -141,7 +141,7 @@ fi
 SCP="scp -C"
 SSH="ssh -C"
 INSTALL_PREFIX="/usr/local"
-EREL_TYPE="development"
+EREL_TYPE="Portable_App"
 ROOTDIR="$TRUNKDIR"
 HG="git"
 
