@@ -6167,7 +6167,10 @@ end procedure
 procedure opGET_KEY()
 -- read an immediate key (if any) from the keyboard or return -1
     m_stmtln("#if _WIN32")
-		c_stmt0("show_console()")
+--###edx.c:10994:23: error: expected ';' before 'endif'
+--###10994 |         show_console()    #endif //  _WIN32
+--###EuPortable		
+   c_stmt0("show_console();\n")
     m_stmtln("#endif")
 	CSaveStr("_0", Code[pc+1], 0, 0, 0)
 	c_stmt("@ = get_key(0);\n", Code[pc+1])
