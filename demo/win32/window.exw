@@ -74,9 +74,9 @@ procedure WinMain()
 	atom hwnd
 	atom icon_handle
 
-	atom wndclass = allocate(SIZE_OF_WNDCLASS,1)
-	atom msg = allocate(SIZE_OF_MESSAGE,1)
-	atom szAppName = allocate_string("HelloWin",1)
+	atom wndclass = allocate(SIZE_OF_WNDCLASS)
+	atom msg = allocate(SIZE_OF_MESSAGE)
+	atom szAppName = allocate_string("HelloWin")
 
 	atom id = routine_id("WndProc")
 	if id = -1 then

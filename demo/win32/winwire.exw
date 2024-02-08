@@ -447,8 +447,8 @@ end function
 procedure WinMain()
 -- main routine 
 
-	atom wndclass = allocate(SIZE_OF_WNDCLASS,1)
-	atom msg = allocate(SIZE_OF_MESSAGE,1)
+	atom wndclass = allocate(SIZE_OF_WNDCLASS)
+	atom msg = allocate(SIZE_OF_MESSAGE)
 	atom szAppName = allocate_string("HelloWin")
 
 	integer id = routine_id("WndProc")
