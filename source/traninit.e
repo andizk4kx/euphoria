@@ -351,6 +351,7 @@ procedure OpenCFiles()
 	c_puts("include/euphoria.h\"\n")
 
 	c_puts("#include \"main-.h\"\n\n")
+	c_puts("#include \"struct.h\"\n\n")
 	c_h = open(output_dir & "main-.h", "w")
 	if c_h = -1 then
 		CompileErr(CANT_OPEN_MAINH_FILE_FOR_OUTPUT)

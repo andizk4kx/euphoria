@@ -19,6 +19,7 @@ include std/math.e
 
 include cominit.e
 include c_out.e
+include emit.e
 include fwdref.e
 include global.e
 include intinit.e
@@ -64,7 +65,10 @@ function name_or_literal( integer sym )
 	end if
 end function
 
-function names( sequence n )
+function names( object n )
+	if atom( n ) then
+		n = { n }
+	end if
 	sequence nl
 	nl = {}
 	for i = 1 to length(n) do
@@ -473,7 +477,28 @@ procedure opASSIGN()  -- or opASSIGN_I or SEQUENCE_COPY
     il( sprintf("%s => %s", names( {a,target} )), 2 )
     pc += 3
 end procedure
---
+
+procedure opMEMSTRUCT_ASSIGN()  -- or opASSIGN_I or SEQUENCE_COPY
+    a = Code[pc+1]  -- pointer
+    b = Code[pc+2]  -- member sym
+    c = Code[pc+3]  -- new value
+    sequence deref
+    if Code[pc+4] then
+		deref = ".*"
+	else
+		deref = ""
+	end if
+	sequence operator = ""
+	switch Code[pc] do
+		case MEMSTRUCT_PLUS     then   operator = "+"
+		case MEMSTRUCT_MINUS    then   operator = "-"
+		case MEMSTRUCT_MULTIPLY then   operator = "*"
+		case MEMSTRUCT_DIVIDE   then   operator = "/"
+	end switch
+    il( sprintf("%s %s.%s%s %s= %s", {opnames[Code[pc]]} & names( {a, b } ) & {deref, operator} & names( {c} ) ), 4 )
+    pc += 5
+end procedure
+
 procedure opELSE()  -- or EXIT, ENDWHILE}) then
 	il( sprintf("%s goto %04d", {opnames[Code[pc]], Code[pc+1]}),1 )
 --    pc = Code[pc+1]
@@ -726,6 +751,13 @@ procedure opTYPE_CHECK()
 
 end procedure
 
+procedure opMEM_TYPE_CHECK()
+
+	punary()
+
+end procedure
+
+
 procedure is_an()
     a = Code[pc+1]
     target = Code[pc+2]
@@ -885,6 +917,22 @@ end procedure
 
 procedure opPLUS() -- or opPLUS_I then
     binary()
+end procedure
+
+procedure opMEMSTRUCT_PLUS()
+	opMEMSTRUCT_ASSIGN()
+end procedure
+
+procedure opMEMSTRUCT_MINUS()
+	opMEMSTRUCT_ASSIGN()
+end procedure
+
+procedure opMEMSTRUCT_MULTIPLY()
+	opMEMSTRUCT_ASSIGN()
+end procedure
+
+procedure opMEMSTRUCT_DIVIDE()
+	opMEMSTRUCT_ASSIGN()
 end procedure
 
 procedure opMINUS() -- or opMINUS_I then
@@ -1165,6 +1213,10 @@ procedure opSIZEOF()
 	unary()
 end procedure
 
+procedure opADDRESSOF()
+	unary()
+end procedure
+
 procedure opMEM_COPY()
 	ptrinary()
 end procedure
@@ -1362,6 +1414,91 @@ procedure opEXIT_BLOCK()
 	punary()
 end procedure
 
+procedure mem_access()
+	-- pc+1 number of accesses
+	-- pc+2 pointer to memstruct
+	-- pc+3 .. pc+n+1 member syms for access
+	
+	-- MEMSTRUCT_ACCESS:
+	-- pc+n+2 target for pointer
+	
+	-- ARRAY_ACCESS
+	-- pc+n+2: subscript
+	-- pc+n+3 target for pointer
+
+	-- OFFSETOF
+	-- pc+1 number of accesses
+	-- pc+2..pc+1+n member syms
+	
+	integer op = Code[pc]
+	integer is_array = (op= ARRAY_ACCESS)
+	integer is_offset = (op = OFFSETOF)
+	integer members = Code[pc+1]
+	sequence text
+	integer start, target
+	if op = OFFSETOF then
+		text = sprintf("%s %s(", {opnames[op]} & names( {SymTab[Code[pc+3]][S_MEM_PARENT]} ) )
+		start = pc + 2
+		
+	else
+		text = sprintf("%s %s %s(", {opnames[op]} & names( {Code[pc+2], SymTab[Code[pc+3]][S_MEM_PARENT]} ) )
+		start = pc + 3
+	end if
+	target = start + members
+	
+	for i = start to start + members - 1 do
+		text &= sprintf(" %s", names( Code[i] ) )
+	end for
+	text &= " )"
+	if is_array then
+		text &= sprintf( "[%s]", {name_or_literal( Code[pc+members+3] )} )
+	end if
+	text &= sprintf(" => %s", names( Code[pc+members+3 + is_array - is_offset] ) )
+	il( text, members + 3 + is_array - is_offset)
+	pc = target + 1
+end procedure
+
+procedure opARRAY_ACCESS()
+	mem_access()
+end procedure
+
+procedure opMEMSTRUCT_ACCESS()
+	mem_access()
+end procedure
+
+procedure opOFFSETOF()
+	mem_access()
+end procedure
+
+procedure opMEMSTRUCT_ARRAY()
+	trinary()
+end procedure
+
+
+procedure opMEMSTRUCT_READ()
+	binary()
+end procedure
+
+procedure opPEEK_ARRAY()
+	trinary()
+end procedure
+include std/console.e
+procedure opPEEK_MEMBER()
+	sequence deref
+	if Code[pc+3] then
+		deref = "DEREFERENCE POINTER"
+	else
+		deref = "VALUE"
+	end if
+	il( sprintf( "%s: %s, %s  [%s] => %s",
+				 {opnames[Code[pc]]} &
+				 names(Code[pc+1..pc+2]) &
+				 {deref} &
+				 names( {Code[pc+4]}) ), 
+		4)
+	pc += 5
+end procedure
+
 function strip_path( sequence file )
 	for i = length( file ) to 1 by -1 do
 		if find( file[i], "/\\" ) then
@@ -1471,7 +1608,7 @@ end procedure
 
 constant MODES = {"M_NORMAL", "M_CONSTANT", "M_TEMP", "M_SCOPE" }
 constant SCOPES = {
-	"SC_?",
+	"SC_NONE",
 	"SC_LOOP_VAR",    -- "private" loop vars known within a single loop
 	"SC_PRIVATE",    -- private within subprogram
 	"SC_GLOOP_VAR",   -- "global" loop var
@@ -1483,7 +1620,10 @@ constant SCOPES = {
 	"SC_MULTIPLY_DEFINED",  -- global symbol defined in 2 or more files
 	"SC_EXPORT",   -- visible to anyone that includes the file
 	"SC_OVERRIDE", -- override an internal
-	"SC_PUBLIC" }   -- visible to any file that includes it, or via "public include"
+	"SC_PUBLIC",   -- visible to any file that includes it, or via "public include"
+	"SC_MEMSTRUCT",
+	$
+	}
 
 constant USAGE_VALUES = {
 	U_UNUSED,
@@ -1554,7 +1694,10 @@ function format_symbol( sequence symbol )
 	if symbol[S_SCOPE] then
 		symbol[S_SCOPE] = SCOPES[symbol[S_SCOPE]]
 	end if
-	
+
+	if length( symbol ) >= S_TOKEN then
+		symbol[S_TOKEN] = LexName( symbol[S_TOKEN] )
+	end if
 
 	return symbol
 end function
@@ -1587,7 +1730,7 @@ procedure write_fwdref_count( atom fn, sequence count )
 	sequence files = custom_sort( SORT_REFS, map:pairs( count[2][2] ) )
 	
 	for i = 1 to length( files ) do
-		printf( fn, "%15d: %s\n", { files[i][2], known_files[files[i][1]] } )
+		printf( fn, "%15d: %s %s\n", { files[i][2], refname, known_files[files[i][1]] } )
 	end for
 	
 end procedure
@@ -1608,144 +1751,152 @@ procedure save_il( sequence name )
 	integer symcnt
 	sequence bucket_usage
 
-	st = open( sprintf("%ssym", { name }), "wb" )
-	pretty_options[DISPLAY_ASCII] = 2
-	pretty_options[LINE_BREAKS]   = 0
+	if output_sym then
+		st = open( sprintf("%ssym", { name }), "wb" )
+		pretty_options[DISPLAY_ASCII] = 2
+		pretty_options[LINE_BREAKS]   = 0
 
-	for j = 1 to length( SymTab ) do
-		puts( st,  pretty_sprint( j & format_symbol( SymTab[j] ), pretty_options ) )
--- 		pretty_print( st, j & SymTab[j], pretty_options )
-		puts( st, "\n" )
-	end for
+		for j = 1 to length( SymTab ) do
+			puts( st,  pretty_sprint( j & format_symbol( SymTab[j] ), pretty_options ) )
+	-- 		pretty_print( st, j & SymTab[j], pretty_options )
+			puts( st, "\n" )
+		end for
 
-	-- now output the chains...
-	in_chain = repeat( 0, length( SymTab ) )
-	for j = 1 to length( SymTab ) do
-		if not in_chain[j] and sym_mode( j ) != M_TEMP then
-			write_next_links( j, st )
-		end if
-	end for
-	in_chain = {}
-	close( st )
-
-	st = open( sprintf("%sline", {name}), "wb" )
-
-	if length(slist) and atom(slist[$]) then
-		slist = s_expand( slist )
+		-- now output the chains...
+		in_chain = repeat( 0, length( SymTab ) )
+		for j = 1 to length( SymTab ) do
+			if not in_chain[j] and sym_mode( j ) != M_TEMP then
+				write_next_links( j, st )
+			end if
+		end for
+		in_chain = {}
+		close( st )
 	end if
 
-	max_width = 0
-	for i = 1 to length(known_files) do
-		if length(known_files[i]) > max_width then
-			max_width = length(known_files[i])
+	if output_line then
+		st = open( sprintf("%sline", {name}), "wb" )
+
+		if length(slist) and atom(slist[$]) then
+			slist = s_expand( slist )
 		end if
-	end for
 
-	line_format = sprintf("%%%ds %%%dd : %%s\n", {max_width, floor(log( length(slist) ) / log(10) ) + 1})
-
-
-	for j = 1 to length(slist) do
-		if atom(slist[j][SRC]) then
-			slist[j][SRC] = fetch_line(slist[j][SRC])
-		end if
-		
-		printf( st, line_format, {known_files[slist[j][LOCAL_FILE_NO]], j, slist[j][SRC] })
-
-	end for
-
-	close(st)
-
-	st = open( sprintf("%shash", { name }), "wb" )
-	sequence bucket = repeat( "", length( buckets ) )
-	sequence end_size = repeat( "", length( buckets ) )
-	sequence bucket_reps = repeat( "", length( buckets ) ) 
-	for i = 1 to length( buckets ) do
-		integer size = 0
-		integer s = buckets[i]
-		while s do
-			size += 1
-			s = SymTab[s][S_SAMEHASH]
-		end while
-		end_size[i] = size
-	end for
-	used_buckets = 0
-	symcnt = 0
-	bucket_usage = {}
-	
-	for i = 1 to length( SymTab ) do
-		if length( SymTab[i] ) >= S_HASHVAL and SymTab[i][S_HASHVAL] then
-			integer h = SymTab[i][S_HASHVAL]
-			integer bx = find( SymTab[i][S_NAME], bucket[h] )
-			if not bx then
-				bucket[h] = append( bucket[h], SymTab[i][S_NAME] )
-				bucket_reps[h] &= 1
-			else
-				bucket_reps[h][bx] += 1
+		max_width = 0
+		for i = 1 to length(known_files) do
+			if length(known_files[i]) > max_width then
+				max_width = length(known_files[i])
 			end if
-		end if
-	end for
+		end for
 
-	for i = 1 to length( bucket ) do
-		for j = 1 to length( bucket[i] ) do
-			bucket[i][j] = sprintf( "[%d:%s]", {bucket_reps[i][j], bucket[i][j]})
-		end for
-		bucket[i] = sum(bucket_reps[i]) & i & bucket[i]
-	end for
-	
-	bucket = sort(bucket, DESCENDING)
-	bucket_usage = repeat(0, bucket[1][1])
-	puts(st, "Bucket size / hashval / Ending Size / hits : contents\n" )
-	for i = 1 to length( bucket ) do
-		if bucket[i][1] > 0 then
-			used_buckets += 1
-			symcnt += bucket[i][1]
-			bucket_usage[bucket[i][1]] += 1
-			printf( st, "%5d %5d %5d %5d: ", bucket[i][1..2] & end_size[i] & bucket_hits[i] )
-			for j = 3 to length( bucket[i] ) do
-				if j > 3 then
-					puts( st, ", " )
-				end if
-				printf( st, "%s", {bucket[i][j]} )
-			end for
-			puts( st, '\n' )
-		end if
-	end for
-	puts( st, '\n' )
-	printf( st, "Symbols         : %d\n", symcnt )
-	printf( st, "Used buckets    : %d (%3.1f%%)\n", {used_buckets, 100 * used_buckets / length(bucket)})
-	printf( st, "Empty buckets   : %d (%3.1f%%)\n", {length(bucket) - used_buckets, 100 * (length(bucket) - used_buckets) / length(bucket)})
-	if used_buckets > 0 then
-		printf( st, "Symbols / bucket: %4.2f\n", symcnt / used_buckets)
-		for i = 1 to length(bucket_usage) do
-			printf( st, "Len %2d : %d\n", {i, bucket_usage[i]})
-		end for
-		
-		sequence hit_counts = {}
-		for i = 1 to length( bucket_hits ) do
-			integer hits = bucket_hits[i] + 1 -- could be 0
-			if length( hit_counts ) < hits then
-				hit_counts &= repeat( 0, hits - length( hit_counts ) )
-			end if
-			hit_counts[hits] += 1
-		end for
-		
-		for i = 1 to length( hit_counts ) do
-			hit_counts[i] = { i-1, hit_counts[i] }
-		end for
-		
-		puts( st, "\nBucket search frequency counts (hits : # buckets):\n" )
--- 		hit_counts = sort( hit_counts )
-		for i = length( hit_counts ) to 1 by -1 do
-			if hit_counts[i][2] then
-				printf( st, "%6d: %d\n", hit_counts[i]  )
+		line_format = sprintf("%%%ds %%%dd : %%s\n", {max_width, floor(log( length(slist) ) / log(10) ) + 1})
+
+
+		for j = 1 to length(slist) do
+			if atom(slist[j][SRC]) then
+				slist[j][SRC] = fetch_line(slist[j][SRC])
 			end if
 			
+			printf( st, line_format, {known_files[slist[j][LOCAL_FILE_NO]], j, slist[j][SRC] })
+
 		end for
+
+		close(st)
 	end if
 
-	close( st )
+	if output_hash then
+		st = open( sprintf("%shash", { name }), "wb" )
+		sequence bucket = repeat( "", length( buckets ) )
+		sequence end_size = repeat( "", length( buckets ) )
+		sequence bucket_reps = repeat( "", length( buckets ) ) 
+		for i = 1 to length( buckets ) do
+			integer size = 0
+			integer s = buckets[i]
+			while s do
+				size += 1
+				s = SymTab[s][S_SAMEHASH]
+			end while
+			end_size[i] = size
+		end for
+		used_buckets = 0
+		symcnt = 0
+		bucket_usage = {}
+		
+		for i = 1 to length( SymTab ) do
+			if length( SymTab[i] ) >= S_HASHVAL and SymTab[i][S_HASHVAL] then
+				integer h = SymTab[i][S_HASHVAL]
+				integer bx = find( SymTab[i][S_NAME], bucket[h] )
+				if not bx then
+					bucket[h] = append( bucket[h], SymTab[i][S_NAME] )
+					bucket_reps[h] &= 1
+				else
+					bucket_reps[h][bx] += 1
+				end if
+			end if
+		end for
+
+		for i = 1 to length( bucket ) do
+			for j = 1 to length( bucket[i] ) do
+				bucket[i][j] = sprintf( "[%d:%s]", {bucket_reps[i][j], bucket[i][j]})
+			end for
+			bucket[i] = sum(bucket_reps[i]) & i & bucket[i]
+		end for
+		
+		bucket = sort(bucket, DESCENDING)
+		bucket_usage = repeat(0, bucket[1][1])
+		puts(st, "Bucket size / hashval / Ending Size / hits : contents\n" )
+		for i = 1 to length( bucket ) do
+			if bucket[i][1] > 0 then
+				used_buckets += 1
+				symcnt += bucket[i][1]
+				bucket_usage[bucket[i][1]] += 1
+				printf( st, "%5d %5d %5d %5d: ", bucket[i][1..2] & end_size[i] & bucket_hits[i] )
+				for j = 3 to length( bucket[i] ) do
+					if j > 3 then
+						puts( st, ", " )
+					end if
+					printf( st, "%s", {bucket[i][j]} )
+				end for
+				puts( st, '\n' )
+			end if
+		end for
+		puts( st, '\n' )
+		printf( st, "Symbols         : %d\n", symcnt )
+		printf( st, "Used buckets    : %d (%3.1f%%)\n", {used_buckets, 100 * used_buckets / length(bucket)})
+		printf( st, "Empty buckets   : %d (%3.1f%%)\n", {length(bucket) - used_buckets, 100 * (length(bucket) - used_buckets) / length(bucket)})
+		if used_buckets > 0 then
+			printf( st, "Symbols / bucket: %4.2f\n", symcnt / used_buckets)
+			for i = 1 to length(bucket_usage) do
+				printf( st, "Len %2d : %d\n", {i, bucket_usage[i]})
+			end for
+			
+			sequence hit_counts = {}
+			for i = 1 to length( bucket_hits ) do
+				integer hits = bucket_hits[i] + 1 -- could be 0
+				if length( hit_counts ) < hits then
+					hit_counts &= repeat( 0, hits - length( hit_counts ) )
+				end if
+				hit_counts[hits] += 1
+			end for
+			
+			for i = 1 to length( hit_counts ) do
+				hit_counts[i] = { i-1, hit_counts[i] }
+			end for
+			
+			puts( st, "\nBucket search frequency counts (hits : # buckets):\n" )
+	-- 		hit_counts = sort( hit_counts )
+			for i = length( hit_counts ) to 1 by -1 do
+				if hit_counts[i][2] then
+					printf( st, "%6d: %d\n", hit_counts[i]  )
+				end if
+				
+			end for
+		end if
+
+		close( st )
+	end if
 	
-	write_fwdref_counts( name )
+	if output_fwd then
+		write_fwdref_counts( name )
+	end if
 
 end procedure
 
@@ -1811,7 +1962,7 @@ procedure InitBackEnd( object ignore )
 			name = "GREATEREQ_IFW"
 		elsif equal(name, "LESSEQ_IFW_I") then
 			name = "LESSEQ_IFW"
-		elsif match( "PEEK", name ) then
+		elsif match( "PEEK", name ) and not match( "_MEMBER", name ) and not match( "_ARRAY", name ) then
 			name = "PEEK"
 		elsif match( "POKE", name ) then
 			name = "POKE"
@@ -1848,6 +1999,70 @@ function max( integer a, integer b )
 	return b
 end function
 
+function mem_name( symtab_index member_sym )
+	integer tid = sym_token( member_sym )
+	switch tid do
+		case MS_CHAR then
+			return "char"
+		case MS_SHORT then
+			return "short"
+		case MS_INT then
+			return "int"
+		case MS_LONG then
+			return "long"
+		case MS_OBJECT then
+			return "object"
+		case MS_LONGLONG then
+			return "long long int"
+		case MS_FLOAT then
+			return "float"
+		case MS_DOUBLE then
+			return "double"
+		case MS_LONGDOUBLE then
+			return "long double"
+		case MS_EUDOUBLE then
+			return "eudouble"
+		case MS_MEMBER then
+			return sym_name( SymTab[member_sym][S_MEM_STRUCT] )
+	end switch
+end function
+
+procedure dis_memstruct( integer ms )
+	if sym_token( ms ) = MEMSTRUCT then
+		puts( out, "\nMemStruct" )
+	else
+		puts( out, "\nMemUnion" )
+	end if
+	
+	printf( out, " [%s-%s:%05d]\n",
+		{known_files[SymTab[ms][S_FILE_NO]], SymTab[ms][S_NAME], ms })
+	printf( out, "    SIZE: %d\n", SymTab[ms][S_MEM_SIZE] )
+	symtab_pointer member_sym = ms
+	printf( out, "            %-20s  %-15s Other Information\n", {"Name", "Type"})
+	while member_sym with entry do
+		printf( out, "    %06d: %-20s  %-15s pointer[%d] signed[%d] array[%d] offset[%3d] size[%d]\n", 
+			{ 
+				member_sym, 
+				sym_name( member_sym ), 
+				mem_name( member_sym ),
+				SymTab[member_sym][S_MEM_POINTER],
+				SymTab[member_sym][S_MEM_SIGNED],
+				SymTab[member_sym][S_MEM_ARRAY],
+				SymTab[member_sym][S_MEM_OFFSET],
+				SymTab[member_sym][S_MEM_SIZE],
+				$
+				} )
+		
+	entry
+		member_sym = SymTab[member_sym][S_MEM_NEXT]
+	end while
+	if sym_token( ms ) = MEMSTRUCT then
+		puts( out, "End MemStruct" )
+	else
+		puts( out, "End MemUnion" )
+	end if
+	printf( out, " [%s:%05d]\n", {sym_name( ms ), ms} )
+end procedure
 
 procedure dis( integer sub )
 	integer op, ix
@@ -1923,45 +2138,91 @@ sequence opts = {
 		{ "t", 0, "translator mode", {NO_PARAMETER}, -1 },
 		{ "b", 0, "binder mode", {NO_PARAMETER}, -1 },
 		{ 0, "file-list", "outputs the list of files in the disassembled code at the top of the .dis file",
-			{NO_PARAMETER}, routine_id("enable_file_list") }
+			{NO_PARAMETER}, routine_id("enable_file_list") },
+		{ 0, "no-il", "suppress IL output (.dis file)", {NO_PARAMETER}, routine_id("suppress_il")},
+		{ 0, "no-sym", "suppress symbol output (.sym file)", {NO_PARAMETER}, routine_id("suppress_sym")},
+		{ 0, "no-line", "suppress line output (.line file)", {NO_PARAMETER}, routine_id("suppress_line")},
+		{ 0, "no-hash", "suppress hash output (.hash file)", {NO_PARAMETER}, routine_id("suppress_hash")},
+		{ 0, "no-fwd", "suppress fwdref output (.fwd file)", {NO_PARAMETER}, routine_id("suppress_fwd")},
+		$
 		}
+
+export integer 
+	output_il   = 1,
+	output_sym  = 1,
+	output_line = 1,
+	output_hash = 1,
+	output_fwd  = 1
+
+function suppress_il( object o )
+	output_il = 0
+	return 0
+end function
+
+function suppress_sym( object o )
+	output_sym = 0
+	return 0
+end function
+
+function suppress_line( object o )
+	output_line = 0
+	return 0
+end function
+
+function suppress_hash( object o )
+	output_hash = 0
+	return 0
+end function
+
+function suppress_fwd( object o )
+	output_fwd = 0
+	return 0
+end function
 
 add_options( opts )
 
 export procedure BackEnd( object ignore )
 
 -- 	map:map result = cmd_parse( opts, -1, Argv )
-
+	puts(1,"writing output\n")
 	save_il( known_files[1] & '.' )
-	out = open( known_files[1] & ".dis", "wb" )
-	printf(1,"saved to [%s.dis]\n", {known_files[1]})
+	
+	if output_il then
+		out = open( known_files[1] & ".dis", "wb" )
+		printf(1,"saved to [%s.dis]\n", {known_files[1]})
 
-	if generate_file_list then
-		puts( out, "File List:\n" )
-		for i = 1 to length( known_files ) do
-			printf( out, "%s\n", {known_files[i]})
-		end for
-		puts( out, "\n" )
-	end if
-
-	if atom(slist[$]) then
-		slist = s_expand(slist)
-	end if
-
-	for i = TopLevelSub to length(SymTab) do
-		if length(SymTab[i]) = SIZEOF_ROUTINE_ENTRY
-		and sequence(SymTab[i][S_CODE])
-		and SymTab[i][S_SCOPE] != SC_PRIVATE then
-			dis( i )
-		else
-			-- other symbols?
+		if generate_file_list then
+			puts( out, "File List:\n" )
+			for i = 1 to length( known_files ) do
+				printf( out, "%s\n", {known_files[i]})
+			end for
+			puts( out, "\n" )
 		end if
-	end for
-	close( out )
 
+		if atom(slist[$]) then
+			slist = s_expand(slist)
+		end if
+
+		for i = TopLevelSub to length(SymTab) do
+			if length(SymTab[i]) = SIZEOF_ROUTINE_ENTRY
+			and sequence(SymTab[i][S_CODE])
+			and SymTab[i][S_SCOPE] != SC_PRIVATE then
+				dis( i )
+			
+			elsif length(SymTab[i])  = SIZEOF_MEMSTRUCT_ENTRY
+			and (SymTab[i][S_TOKEN] = MEMSTRUCT or SymTab[i][S_TOKEN] = MEMUNION) then
+				dis_memstruct( i )
+			else
+				-- other symbols?
+			end if
+		end for
+		close( out )
+	end if
+	
 	if generate_html then
 		dox:generate()
 	end if
 
 end procedure
 mode:set_backend( routine_id("BackEnd") )
+

@@ -168,7 +168,7 @@ export constant
 	END_PARAM_CHECK     = 156,
 	CONCAT_N            = 157,
 	NOPWHILE            = 158,  -- Translator only
-	NOP1                = 159,  -- Translator only
+	NOP1                = 159,
 	PLENGTH             = 160,
 	LHS_SUBS1           = 161,
 	PASSIGN_SUBS        = 162,
@@ -228,7 +228,21 @@ export constant
 	PEEK_POINTER        = 216,
 	SIZEOF              = 217,
 	STARTLINE_BREAK     = 218,
-	MAX_OPCODE          = 218
+	MEMSTRUCT_ACCESS    = 219,
+	MEMSTRUCT_ARRAY     = 220,
+	PEEK_MEMBER         = 221,
+	MEMSTRUCT_READ      = 222,
+	MEMSTRUCT_ASSIGN    = 223, 
+	MEMSTRUCT_PLUS      = 224,
+	MEMSTRUCT_MINUS     = 225,
+	MEMSTRUCT_MULTIPLY  = 226,
+	MEMSTRUCT_DIVIDE    = 227,
+	MEM_TYPE_CHECK      = 228,
+	ADDRESSOF           = 229,
+	OFFSETOF            = 230,
+	PEEK_ARRAY          = 231,
+	ARRAY_ACCESS        = 232,
+	MAX_OPCODE          = 232
 
 
 -- adding new opcodes possibly affects reswords.h (C-coded backend),
@@ -312,7 +326,11 @@ export enum
 	DEPRECATE,
 	POKE_LONG,
 	PEEK_LONGU,
-	PEEK_LONGS
+	PEEK_LONGS,
+	MEMSTRUCT_DECL,
+	MEMUNION_DECL,
+	MEMTYPE,
+	$
 
 export enum
 	FUNC = 501,
@@ -337,7 +355,29 @@ export enum
 	QUALIFIED_FUNC,
 	QUALIFIED_PROC,
 	QUALIFIED_TYPE,
-	NAMESPACE
+	NAMESPACE,
+	MEMSTRUCT,
+	QUALIFIED_MEMSTRUCT,
+	MEMUNION,
+	QUALIFIED_MEMUNION,
+	MS_SIGNED,
+	MS_UNSIGNED,
+	MS_POINTER,
+	MS_CHAR,
+	MS_SHORT,
+	MS_INT,
+	MS_LONG,
+	MS_LONGLONG,
+	MS_FLOAT,
+	MS_DOUBLE,
+	MS_LONGDOUBLE,
+	MS_EUDOUBLE,
+	MS_OBJECT,
+	MS_MEMBER,
+	MS_AS,
+	
+	LAST_TOKEN,
+	$
 
 enum -- token category name id
 	TC_ILLCHAR,

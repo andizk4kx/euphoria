@@ -33,12 +33,15 @@ include c_out.e
 include block.e
 include keylist.e
 include coverage.e
+include memstruct.e
 include msgtext.e
 
 constant UNDEFINED = -999
 constant DEFAULT_SAMPLE_SIZE = 25000  -- for time profile
 constant ASSIGN_OPS = {EQUALS, PLUS_EQUALS, MINUS_EQUALS, MULTIPLY_EQUALS,
 						DIVIDE_EQUALS, CONCAT_EQUALS}
+constant MEMSTRUCT_ASSIGN_OPS = {MEMSTRUCT_ASSIGN, MEMSTRUCT_PLUS, MEMSTRUCT_MINUS, MEMSTRUCT_MULTIPLY,
+						MEMSTRUCT_DIVIDE, 0}
 constant SCOPE_TYPES = {SC_LOCAL, SC_GLOBAL, SC_PUBLIC, SC_EXPORT, SC_UNDEFINED}
 
 --*****************
@@ -292,9 +295,8 @@ procedure Forward_InitCheck( token tok, integer ref )
 			set_qualified_fwd( SymTab[sym][S_FILE_NO] )
 		end if
 		ref = new_forward_reference( GLOBAL_INIT_CHECK, tok[T_SYM], GLOBAL_INIT_CHECK )
-
 		emit_op( GLOBAL_INIT_CHECK )
-		emit_addr( sym )
+		emit_addr( 0 )
 	end if
 end procedure
 
@@ -343,7 +345,6 @@ procedure InitCheck(symtab_index sym, integer ref)
 	elsif ref and sym > 0 and sym_mode( sym ) = M_CONSTANT and equal( NOVALUE, sym_obj( sym ) ) then
 		emit_op( GLOBAL_INIT_CHECK )
 		emit_addr(sym)
-	
 	end if
 	-- else .. ignore loop vars, constants
 end procedure
@@ -492,7 +493,7 @@ procedure PatchXList(integer base)
 	exit_list = exit_list [1..exit_top]
 end procedure
 
-procedure putback(token t)
+export procedure putback(token t)
 -- push a scanner token back onto the input stream
 	backed_up_tok = append(backed_up_tok, t)
 	
@@ -676,7 +677,7 @@ function read_recorded_token(integer n)
   	return t
 end function
 
-function next_token()
+export function next_token()
 -- read next scanner token
 	token t
 	sequence s
@@ -756,7 +757,7 @@ function Expr_list()
 	return n
 end function
 
-procedure tok_match(integer tok, integer prevtok = 0)
+export procedure tok_match(integer tok, integer prevtok = 0)
 -- match token or else syntax error
 	token t
 	sequence expected, actual, prevname
@@ -1079,7 +1080,6 @@ procedure Forward_call(token tok, integer opcode = PROC_FORWARD )
 		end switch
 	end while
 
-	integer fc_pc = length( Code ) + 1
 	emit_opnd( args )
 
 	op_info1 = proc
@@ -1199,7 +1199,26 @@ procedure Function_call( token tok )
 	if id = FUNC or id = TYPE then
 		-- to warn if not in include tree
 		UndefinedVar( tok[T_SYM] )
+		
+		switch SymTab[tok[T_SYM]][S_OPCODE] do
+			case SIZEOF then
+				if parse_sizeof() then
+					-- special parsing for multi-part memstruct types
+					tok_match( RIGHT_ROUND )
+					scope = SymTab[tok[T_SYM]][S_SCOPE]
+					opcode = SymTab[tok[T_SYM]][S_OPCODE]
+					goto "args_parsed"
+				else
+					goto "after left round"
+				end if
+			case OFFSETOF then
+				parse_memstruct_func( SymTab[tok[T_SYM]][S_OPCODE] )
+				scope = SymTab[tok[T_SYM]][S_SCOPE]
+				opcode = SymTab[tok[T_SYM]][S_OPCODE]
+				goto "args_parsed"
+		end switch
 	end if
+	
 
 	e = SymTab[tok[T_SYM]][S_EFFECT]
 	if e then
@@ -1218,6 +1237,8 @@ procedure Function_call( token tok )
 		end if
 	end if
 	tok_match(LEFT_ROUND)
+	
+	label "after left round"
 	scope = SymTab[tok[T_SYM]][S_SCOPE]
 	opcode = SymTab[tok[T_SYM]][S_OPCODE]
 	if equal(SymTab[tok[T_SYM]][S_NAME],"object") and scope = SC_PREDEF then
@@ -1228,6 +1249,7 @@ procedure Function_call( token tok )
 		ParseArgs(tok[T_SYM])
 	end if
 
+	label "args_parsed"
 	if scope = SC_PREDEF then
 		emit_op(opcode)
 	else
@@ -1240,6 +1262,7 @@ procedure Function_call( token tok )
 			end if
 		end if
 	end if
+	
 end procedure
 
 procedure Factor()
@@ -1256,7 +1279,40 @@ procedure Factor()
 		tok = read_recorded_token(tok[T_SYM])
 		id = tok[T_ID]
 	end if
+	
 	switch id label "factor" do
+		case MEMTYPE then
+			-- use its alias
+			sym = tok[T_SYM]
+			id = SymTab[sym][S_MEM_TYPE]
+			
+			if not id then
+				sym = SymTab[sym][S_MEM_PARENT]
+				id = sym_token( sym )
+				tok[T_SYM] = sym
+				tok[T_ID]  = id
+			end if
+			
+			fallthru
+		case MEMSTRUCT, QUALIFIED_MEMSTRUCT, MEMUNION, QUALIFIED_MEMUNION then
+			-- probably needs error checking or something to make sure 
+			-- the struct makes sense
+			
+			token look_ahead = next_token()
+			putback( look_ahead )
+			if look_ahead[T_ID] = DOT then
+				-- a "naked" memstruct access...offsetof() uses this
+				putback( tok )
+				
+				-- Need this extra push, used by MEMSTRUCT_ACCESS / PEEK_MEMBER
+				-- which OFFSETOF will eat.  Otherwise, we corrupt the stack.
+				Push( tok[T_SYM] )
+				MemStruct_access( tok[T_SYM], FALSE )
+			else
+				
+				emit_opnd( tok[T_SYM] )
+			end if
+			
 		case VARIABLE, QUALIFIED_VARIABLE then
 			sym = tok[T_SYM]
 			if sym < 0 or SymTab[sym][S_SCOPE] = SC_UNDEFINED then
@@ -1282,35 +1338,47 @@ procedure Factor()
 
 			short_circuit -= 1
 			tok = next_token()
-			current_sequence = append(current_sequence, sym)
-			while tok[T_ID] = LEFT_SQUARE do
-				subs_depth += 1
-				if lhs_subs_level >= 0 then
-					lhs_subs_level += 1
-				end if
-				save_factors = factors
-				save_lhs_subs_level = lhs_subs_level
-				call_proc(forward_expr, {})
-				tok = next_token()
-				if tok[T_ID] = SLICE then
+			
+			
+			if tok[T_ID] = DOT then
+				MemStruct_access( sym, FALSE )
+			else
+				current_sequence = append(current_sequence, sym)
+				while tok[T_ID] = LEFT_SQUARE do
+					subs_depth += 1
+					if lhs_subs_level >= 0 then
+						lhs_subs_level += 1
+					end if
+					save_factors = factors
+					save_lhs_subs_level = lhs_subs_level
 					call_proc(forward_expr, {})
-					emit_op(RHS_SLICE)
-					tok_match(RIGHT_SQUARE)
 					tok = next_token()
-					exit
+					if tok[T_ID] = SLICE then
+						call_proc(forward_expr, {})
+						emit_op(RHS_SLICE)
+						tok_match(RIGHT_SQUARE)
+						tok = next_token()
+						exit
+					else
+						putback(tok)
+						tok_match(RIGHT_SQUARE)
+						subs_depth -= 1
+						current_sequence = remove( current_sequence, length( current_sequence ) )
+						emit_op(RHS_SUBS) -- current_sequence will be updated
+					end if
+					factors = save_factors
+					lhs_subs_level = save_lhs_subs_level
+					tok = next_token()
+				end while
+				
+				if tok[T_ID] = DOT then
+					MemStruct_access( Top(), FALSE )
 				else
 					putback(tok)
-					tok_match(RIGHT_SQUARE)
-					subs_depth -= 1
-					current_sequence = remove( current_sequence, length( current_sequence ) )
-					emit_op(RHS_SUBS) -- current_sequence will be updated
 				end if
-				factors = save_factors
-				lhs_subs_level = save_lhs_subs_level
-				tok = next_token()
-			end while
-			current_sequence = remove( current_sequence, length( current_sequence ) )
-			putback(tok)
+				current_sequence = remove( current_sequence, length( current_sequence ) )
+			end if
+			
 			short_circuit += 1
 
 		case DOLLAR then
@@ -1442,7 +1510,7 @@ end function
 constant boolOps = {OR, AND, XOR}
 export sequence ExprLine
 export integer expr_bp
-procedure Expr()
+export procedure Expr()
 -- Parse a general expression
 -- Use either short circuit or full evaluation.
 	token tok
@@ -1505,6 +1573,59 @@ procedure Expr()
 end procedure
 
 forward_expr = routine_id("Expr")
+
+procedure emit_mem_type_check( symtab_index var, symtab_index type_sym, symtab_index member_sym, symtab_index pointer, integer op )
+	if op != MEMSTRUCT_ASSIGN then
+		-- We have to read the value first via PEEK_MEMBER
+		emit_opnd( pointer )
+		emit_opnd( member_sym )
+		emit_op( PEEK_MEMBER )
+	else
+		emit_opnd( var )
+	end if
+	
+	if type_sym > 0 then
+		op_info1 = type_sym
+		emit_or_inline()
+	else
+		-- we haven't resolved the type yet!
+		integer val_sym = Pop()
+		integer ref = new_forward_reference( MEM_TYPE_CHECK, type_sym, TYPE_CHECK_FORWARD )
+		Code &= { TYPE_CHECK_FORWARD, val_sym, OpTypeCheck }
+	end if
+	
+	emit_opnd( member_sym )
+	emit_op(MEM_TYPE_CHECK)
+end procedure
+
+procedure MemTypeCheck( symtab_index var, symtab_index member_sym, symtab_index pointer, integer op )
+	if member_sym < 0 then
+		-- TODO: need to handle fwd refs here
+		return
+	end if
+	if length( SymTab[member_sym] ) != SIZEOF_MEMSTRUCT_ENTRY then
+		InternalErr( sprintf("Error on typechecking %s", { sym_name( member_sym ) }) )
+	end if
+	integer type_sym = SymTab[member_sym][S_MEM_TYPE]
+	if 0 = type_sym then
+		-- no type for this member
+		return
+	end if
+	
+	if TRANSLATE then
+		if OpTypeCheck then
+			if SymTab[type_sym][S_EFFECT] then
+				-- only call those with side effects
+				emit_mem_type_check( var, type_sym, member_sym, pointer, op )
+			end if
+		end if
+	else
+		if OpTypeCheck then
+			emit_mem_type_check( var, type_sym, member_sym, pointer, op )
+		end if
+	end if
+	
+end procedure
 
 procedure TypeCheck(symtab_index var)
 -- emit code to type-check a var (after it has been assigned-to)
@@ -1600,7 +1721,51 @@ procedure TypeCheck(symtab_index var)
 	end if
 end procedure
 
-procedure Assignment(token left_var)
+function check_assign_op( token left_var, integer subs = 0 )
+	token tok = next_token()
+	integer assign_op = tok[T_ID]
+	
+	if not find(assign_op, ASSIGN_OPS) then
+		sequence lname = sym_name( left_var[T_SYM] )
+		if assign_op = DOT then
+			-- memstruct
+			if subs then
+				-- need to emit subscripts!
+				-- also, convert LHS_SUBS into RHS subs
+				integer pc = length( Code ) + 1
+				for i = subs - 1 to 1 do
+					Code[$] = NOP1
+					pc -= 5 -- size of LHS_SUBS
+					if i = 1 then
+						Code[pc] = RHS_SUBS
+					else
+						Code[pc] = RHS_SUBS_CHECK
+					end if
+				end for
+				emit_op( RHS_SUBS )
+			end if
+			MemStruct_access( left_var[T_SYM], TRUE )
+			assign_op = check_assign_op( left_var )
+			integer ox = find( assign_op, ASSIGN_OPS )
+			assign_op = 0
+			if ox then
+				assign_op = MEMSTRUCT_ASSIGN_OPS[ox]
+			end if
+			if not assign_op then
+				CompileErr(76, {lname})
+			end if
+			return assign_op
+		
+		elsif assign_op = COLON then
+			CompileErr(133, {lname})
+		else
+			CompileErr(76, {lname})
+		end if
+	end if
+	return assign_op
+end function
+
+procedure Assignment(token left_var )
 -- parse an assignment statement
 	token tok
 	integer subs, slice, assign_op, subs1_patch
@@ -1677,32 +1842,50 @@ procedure Assignment(token left_var)
 	end while
 
 	lhs_ptr = FALSE
+	
+	putback( tok )
+	assign_op = check_assign_op( left_var, subs )
 
-	assign_op = tok[T_ID]
-	if not find(assign_op, ASSIGN_OPS) then
-		sequence lname = SymTab[left_var[T_SYM]][S_NAME]
-		if assign_op = COLON then
-			CompileErr(SYNTAX_ERROR__UNKNOWN_NAMESPACE_1_USED, {lname})
-		else
-			CompileErr(EXPECTED_TO_SEE_AN_ASSIGNMENT_AFTER_1_SUCH_AS__OR, {lname})
-		end if
-	end if
-
-	if subs = 0 then
+-- <<<<<<< local
+	if subs = 0 label "subs_if" then
+-- =======
+-- 	assign_op = tok[T_ID]
+-- 	if not find(assign_op, ASSIGN_OPS) then
+-- 		sequence lname = SymTab[left_var[T_SYM]][S_NAME]
+-- 		if assign_op = COLON then
+-- 			CompileErr(SYNTAX_ERROR__UNKNOWN_NAMESPACE_1_USED, {lname})
+-- 		else
+-- 			CompileErr(EXPECTED_TO_SEE_AN_ASSIGNMENT_AFTER_1_SUCH_AS__OR, {lname})
+-- 		end if
+-- 	end if
+-- 
+-- 	if subs = 0 then
+-- >>>>>>> other
 		-- not subscripted
 		integer temp_len = length(Code)
-		if assign_op = EQUALS then
-			Expr() -- RHS expression
-			InitCheck(left_sym, FALSE)
-		else
-			InitCheck(left_sym, TRUE)
-			if left_sym > 0 then
-				SymTab[left_sym][S_USAGE] = or_bits(SymTab[left_sym][S_USAGE], U_READ)
-			end if
-			emit_opnd(left_sym)
-			Expr() -- RHS expression
-			emit_assign_op(assign_op)
-		end if
+		switch assign_op do
+			case EQUALS then
+				Expr() -- RHS expression
+				InitCheck(left_sym, FALSE)
+			
+			case MEMSTRUCT_ASSIGN, MEMSTRUCT_PLUS, MEMSTRUCT_MINUS, 
+					MEMSTRUCT_MULTIPLY, MEMSTRUCT_DIVIDE then
+				
+				Expr()
+				integer top = length( Code )
+				emit_op( assign_op )
+				MemTypeCheck( Code[$], Code[$-2], Code[top], assign_op )
+				break "subs_if"
+			case else
+				InitCheck(left_sym, TRUE)
+				if left_sym > 0 then
+					SymTab[left_sym][S_USAGE] = or_bits(SymTab[left_sym][S_USAGE], U_READ)
+				end if
+				emit_opnd(left_sym)
+				Expr() -- RHS expression
+				emit_assign_op(assign_op)
+				
+		end switch
 		emit_op(ASSIGN)
 		TypeCheck(left_sym)
 	else
@@ -4779,7 +4962,17 @@ export procedure real_parser(integer nested)
 
 			elsif id = PROCEDURE or id = FUNCTION or id = TYPE_DECL then
 				SubProg(id, scope, deprecated)
+				
+
+			elsif id = MEMSTRUCT_DECL then
+				MemStruct_declaration( scope )
 			
+			elsif id = MEMUNION_DECL then
+				MemUnion_declaration( scope )
+			
+			elsif id = MEMTYPE then
+				MemType( scope )
+				
 			elsif (scope = SC_PUBLIC) and id = INCLUDE then
 				IncludeScan( 1 )
 				PushGoto()
@@ -4965,8 +5158,19 @@ export procedure real_parser(integer nested)
 			StartSourceLine( TRUE )
 			Multi_assign()
 
+
+		elsif id = MEMSTRUCT_DECL then
+			MemStruct_declaration( SC_LOCAL )
+		
+		elsif id = MEMUNION_DECL then
+			MemUnion_declaration( SC_LOCAL )
+		
 		elsif id = ILLEGAL_CHAR then
+
 			CompileErr(ILLEGAL_CHARACTER)
+			
+		elsif id = MEMTYPE then
+			MemType( SC_LOCAL )
 
 		else
 			if nested then

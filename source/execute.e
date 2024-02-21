@@ -20,11 +20,14 @@ elsedef
 	without type_check
 end ifdef
 
+include std/convert.e
+include std/dll.e
+include std/error.e
+include std/io.e
 include std/os.e
 include std/pretty.e
-include std/io.e
-include std/types.e
 include std/text.e
+include std/types.e
 
 include global.e
 include opnames.e
@@ -35,6 +38,7 @@ include scanner.e
 include mode.e as mode
 include intinit.e
 include coverage.e
+include emit.e
 
 include std/machine.e as dep
 include std/dll.e -- for sizeof in 4.0
@@ -708,17 +712,21 @@ procedure quit_after_error()
 -- final termination
 	write_coverage_db()
 	
+	ifdef CRASH_ON_ERROR then
+		crash("crashing on error")
+	end ifdef
+	
 	ifdef WINDOWS then
 		if not batch_job and not test_only then
 			puts(2, "\nPress Enter...\n")
 			getc(0)
 		end if
 	end ifdef
-
+	
 	abort(1)
 end procedure
 
-procedure RTFatalType(integer x)
+procedure RTFatalType(integer x, integer member = 0 )
 -- handle a fatal run-time type-check error
 	sequence msg, v
 	sequence vname
@@ -732,6 +740,9 @@ procedure RTFatalType(integer x)
 		vname = "inlined variable"
 	end if
 	msg = sprintf("type_check failure, %s is ", {vname})
+	if member then
+		a = member
+	end if
 	v = sprint(val[a])
 	if length(v) > 70 - length(vname) then
 		v = v[1..70 - length(vname)]
@@ -1571,6 +1582,31 @@ procedure opASSIGN()
 	pc += 3
 end procedure
 
+procedure opMEMSTRUCT_ASSIGN()
+	atom pointer = val[Code[pc+1]]
+	integer struct_sym = Code[pc+2]
+	object source_val = val[Code[pc+3]]
+	integer deref_ptr = Code[pc+4]
+	integer tok = sym_token( struct_sym )
+	if SymTab[struct_sym][S_MEM_POINTER] then
+		if deref_ptr then
+			pointer = peek_pointer( pointer )
+		else
+			tok = MS_MEMBER
+		end if
+	end if
+	
+	switch tok do
+		case MEMSTRUCT then
+			write_memstruct( pointer, struct_sym, source_val )
+		case MEMUNION then
+			poke( pointer, source_val & repeat( 0, SymTab[struct_sym][S_MEM_SIZE] - length( source_val ) ) )
+		case else
+			poke_member( pointer, struct_sym, source_val, deref_ptr )
+	end switch
+	pc += 5
+end procedure
+
 procedure opELSE()
 -- ELSE, EXIT, ENDWHILE
 	pc = Code[pc+1]
@@ -2110,6 +2146,16 @@ procedure opTYPE_CHECK()
 	pc += 1
 end procedure
 
+procedure opMEM_TYPE_CHECK()
+-- type check for a user-defined type
+-- this always follows a type-call
+	if val[Code[pc-1]] = 0 then
+		RTFatalType(pc + 1, Code[pc - 2])
+	end if
+	pc += 2
+end procedure
+
+
 procedure kill_temp( symtab_index sym )
 	if sym_mode( sym ) = M_TEMP then
 		val[sym] = NOVALUE
@@ -2333,6 +2379,29 @@ procedure opMULTIPLY()
 	target = Code[pc+3]
 	val[target] = val[a] * val[b]
 	pc += 4
+end procedure
+
+procedure opMEMSTRUCT_ASSIGN_OP()
+	atom pointer = val[Code[pc+1]]
+	if Code[pc+4] then
+		pointer = peek_pointer( pointer )
+	end if
+	atom v = peek_member( pointer, Code[pc+2], , -1 )
+	atom x = val[Code[pc+3]]
+	
+	switch Code[pc] do
+		case MEMSTRUCT_PLUS then
+			v += x
+		case MEMSTRUCT_MINUS then
+			v -= x
+		case MEMSTRUCT_DIVIDE then
+			v /= x
+		case MEMSTRUCT_MULTIPLY then
+			v *= x
+	end switch
+	
+	poke_member( pointer, Code[pc+2], v, -1 )
+	pc += 5
 end procedure
 
 procedure opPLUS()
@@ -3179,6 +3248,14 @@ procedure opPEEK8S()
 	val[target] = peek8s(val[a])
 	pc += 3
 end procedure
+
+procedure opPEEK_POINTER()
+	a = Code[pc+1]
+	target = Code[pc+2]
+	val[target] = peek_pointer(val[a])
+	pc += 3
+end procedure
+
 procedure opPEEK_STRING()
 	a = Code[pc+1]
 	target = Code[pc+2]
@@ -3203,8 +3280,406 @@ end procedure
 procedure opSIZEOF()
 	a = Code[pc+1]
 	b = Code[pc+2]
-	val[b] = sizeof( val[a] )
+	integer id = sym_token( a )
+	switch id do
+		case MEMSTRUCT, MEMUNION, MS_MEMBER, MEMTYPE then
+			val[b] = SymTab[a][S_MEM_SIZE]
+		case MS_CHAR       then val[b] = sizeof( char )
+		case MS_SHORT      then val[b] = sizeof( short )
+		case MS_INT        then val[b] = sizeof( int )
+		case MS_LONG       then val[b] = sizeof( long )
+		case MS_LONGLONG   then val[b] = sizeof( long long )
+		case MS_OBJECT     then val[b] = sizeof( object ) 
+		case MS_FLOAT      then val[b] = sizeof( float )
+		case MS_DOUBLE     then val[b] = sizeof( double )
+		case MS_LONGDOUBLE then val[b] = sizeof( long double )
+		case MS_EUDOUBLE   then val[b] = sizeof( eudouble )
+		case else
+			val[b] = sizeof( val[a] )
+	end switch
+	
 	pc += 3
+end procedure
+
+procedure opOFFSETOF()
+	integer len = Code[pc+1]
+	a = Code[pc+2]
+	b = Code[pc+len+2]
+	
+	val[b] = SymTab[a][S_MEM_OFFSET]
+	for i = 2 to len do
+		a = Code[pc + i + 1]
+		val[b] += SymTab[a][S_MEM_OFFSET]
+	end for
+	
+	pc += len + 3
+end procedure
+
+procedure opADDRESSOF()
+	a = Code[pc+1]
+	b = Code[pc+2]
+	val[b] = val[a]
+	pc += 3
+end procedure
+
+function mem_access( integer member_count, atom ptr )
+	
+	b = pc + 2 + member_count -- the last member
+	
+	for i = pc+3 to b do
+		ptr += SymTab[Code[i]][S_MEM_OFFSET]
+		if SymTab[Code[i]][S_MEM_POINTER] and i < b then
+			ptr = peek_pointer( ptr )
+		end if
+	end for
+	return ptr
+end function
+
+integer memaccess = 0
+procedure opARRAY_ACCESS()
+	-- pc+1 number of accesses
+	-- pc+2 pointer to memstruct
+	-- pc+2 .. pc+n+2 member syms for access
+	-- pc+n+3 subscript sym
+	-- pc+n+4 target for pointer
+	memaccess = ARRAY_ACCESS
+	integer
+		member_count  = Code[pc+1],
+		subscript_sym = Code[pc + member_count + 3],
+		array_sym     = Code[pc + member_count + 2]
+	atom ptr = mem_access( member_count, val[Code[pc+2]] )
+	
+	integer element_size = SymTab[array_sym][S_MEM_SIZE]
+	if SymTab[array_sym][S_MEM_ARRAY] then
+		element_size /= SymTab[array_sym][S_MEM_ARRAY]
+	end if
+	ptr += val[subscript_sym] * element_size
+	val[Code[pc + member_count + 4]] = ptr
+	
+	pc += member_count + 5
+end procedure
+
+procedure opMEMSTRUCT_ACCESS()
+	-- pc+1 number of accesses
+	-- pc+2 pointer to memstruct
+	-- pc+2 .. pc+n+2 member syms for access
+	-- pc+n+3 target for pointer
+	memaccess = MEMSTRUCT_ACCESS
+	integer
+		member_count  = Code[pc+1]
+	atom ptr = mem_access( member_count, val[Code[pc+2]] )
+	val[Code[pc + member_count + 3]] = ptr
+	pc += member_count + 4
+end procedure
+
+procedure opMEMSTRUCT_ARRAY()
+	-- pc+1 pointer
+	-- pc+2 member sym
+	-- pc+3 subscript
+	-- pc+4 target
+	atom    ptr  = val[Code[pc+1]]
+	integer size = SymTab[Code[pc+2]][S_MEM_SIZE]
+	ptr += val[Code[pc+3]] * size
+	val[Code[pc+4]] = ptr
+	pc += 5
+end procedure
+
+procedure poke_member_value( atom pointer, integer data_type, object value )
+	switch data_type do
+		case MS_CHAR then
+			poke( pointer, value )
+		case MS_SHORT then
+			poke2( pointer, value )
+		case MS_INT then
+			poke4( pointer, value )
+		case MS_LONG then
+			ifdef WINDOWS then
+				poke4( pointer, value )
+			elsedef
+				poke_pointer( pointer, value )
+			end ifdef
+		case MS_LONGLONG then
+			poke8( pointer, value )
+		case MS_OBJECT then
+			poke_pointer( pointer, value )
+		case MS_FLOAT then
+			poke( pointer, atom_to_float32( value ) )
+		case MS_DOUBLE then
+			poke( pointer, atom_to_float64( value ) )
+		case MS_LONGDOUBLE then
+			poke( pointer, atom_to_float80( value ) )
+		case MS_EUDOUBLE then
+			if sizeof( C_POINTER ) = 4 then
+				poke( pointer, atom_to_float64( value ) )
+			else
+				poke( pointer, atom_to_float80( value ) )
+			end if
+		case else
+			
+			RTFatal( "Error assigning to a memstruct -- can only assign primitive data members"  )
+	end switch
+end procedure
+
+procedure poke_member( atom pointer, integer sym, object value, integer deref_ptr = 0 )
+	integer data_type = SymTab[sym][S_TOKEN]
+	integer signed    = SymTab[sym][S_MEM_SIGNED]
+	
+	if SymTab[sym][S_MEM_POINTER] and not deref_ptr then
+		data_type = MS_OBJECT
+		signed    = 0
+	end if
+	
+	if SymTab[sym][S_MEM_ARRAY] then
+		integer array_length = SymTab[sym][S_MEM_ARRAY]
+		integer max = array_length
+		integer size = SymTab[sym][S_MEM_SIZE] / array_length
+		if memaccess = ARRAY_ACCESS then
+			poke_member_value( pointer, data_type, value )
+		else
+			if array_length > length( value ) then
+				max = length( value )
+			end if
+			for i = 1 to max do
+				poke_member_value( pointer, data_type, value[i] )
+				pointer += size
+			end for
+			for i = max + 1 to array_length do
+				poke_member_value( pointer, data_type, 0 )
+				pointer += size
+			end for
+		end if
+	elsif data_type = MS_MEMBER then
+		write_memstruct( pointer, SymTab[sym][S_MEM_STRUCT], value )
+	else
+		poke_member_value( pointer, data_type, value )
+	end if
+	
+end procedure
+
+procedure write_memstruct( atom pointer, integer sym, object value )
+
+	if atom( value ) then
+		value = {value}
+	end if
+	
+	integer member = SymTab[sym][S_MEM_NEXT]
+	
+	for i = 1 to length( value ) do
+		
+		if not member then
+			exit
+		end if
+		if atom( value[i] ) or SymTab[member][S_MEM_ARRAY] then
+			poke_member( pointer + SymTab[member][S_MEM_OFFSET], member, value[i] )
+		else
+			write_memstruct( pointer + SymTab[member][S_MEM_OFFSET], SymTab[member][S_MEM_STRUCT], value[i] )
+		end if
+		member = SymTab[member][S_MEM_NEXT]
+		
+	end for
+	
+	-- zero out the rest
+	integer ix = length( value ) + 1
+	while member do
+		
+		poke_member( pointer + SymTab[member][S_MEM_OFFSET], member, 0 )
+		
+		member = SymTab[member][S_MEM_NEXT]
+	end while
+end procedure
+
+--**
+-- Peek a member value.
+--
+-- deref_ptr: Identifies if the pointer needs to be dereferenced if the member is a pointer.
+-- If deref_ptr is 0, then the pointer value is assigned.
+-- If deref_ptr is 1, then the pointer is dereferenced and the assignment of the actual type is done.
+-- If deref_ptr is anything else, the pointer is assumed to already be dereferenced, and the
+-- value is assigned as the member's data type, since the caller has already dereferenced the pointer.
+function peek_member( atom pointer, integer sym, integer array_index = -1, integer deref_ptr = 0 )
+	integer data_type = SymTab[sym][S_TOKEN]
+	integer signed    = SymTab[sym][S_MEM_SIGNED]
+	
+	if SymTab[sym][S_MEM_POINTER] then
+		if deref_ptr = 1 then
+			-- result of ptr.MEMSTRUCT.member.*
+			pointer = peek_pointer( pointer )
+		elsif deref_ptr = 0 then
+			-- just return the pointer itself
+			data_type = MS_OBJECT
+			signed    = 0
+		end if
+	
+	elsif array_index != -1 then
+		integer element_size = SymTab[sym][S_MEM_SIZE] / SymTab[sym][S_MEM_ARRAY]
+		pointer += element_size * array_index
+	
+	elsif SymTab[sym][S_MEM_ARRAY] then
+		sequence s = repeat( 0, SymTab[sym][S_MEM_ARRAY] )
+		for i = 1 to SymTab[sym][S_MEM_ARRAY] do
+			s[i] = peek_member( pointer, sym, i-1)
+		end for
+		return s
+	end if
+	
+	switch data_type do
+		case MS_CHAR then
+			if signed then
+				return peeks( pointer )
+			else
+				return peek( pointer )
+			end if
+		case MS_SHORT then
+			if signed then
+				return peek2s( pointer )
+			else
+				return peek2u( pointer )
+			end if
+		case MS_INT then
+			if signed then
+				return peek4s( pointer )
+			else
+				return peek4u( pointer )
+			end if
+		case MS_LONG then
+			ifdef WINDOWS then
+				if signed then
+					return peek4s( pointer )
+				else
+					return peek4u( pointer )
+				end if
+			elsedef
+				if sizeof( C_LONG ) = 4 then
+					if signed then
+						return peek4s( pointer )
+					else
+						return peek4u( pointer )
+					end if
+				else
+					if signed then
+						return peek8s( pointer )
+					else
+						return peek8u( pointer )
+					end if
+				end if
+			end ifdef
+		case MS_LONGLONG then
+			if signed then
+				return peek8s( pointer )
+			else
+				return peek8u( pointer )
+			end if
+		case MS_OBJECT then
+			if sizeof( C_POINTER ) = 4 then
+				if signed then
+					return peek4s( pointer )
+				else
+					return peek4u( pointer )
+				end if
+			else
+				if signed then
+					return peek8s( pointer )
+				else
+					return peek8u( pointer )
+				end if
+			end if
+		case MS_FLOAT then
+			return float32_to_atom( peek( { pointer, 4 } ) )
+		case MS_DOUBLE then
+			return float64_to_atom( peek( { pointer, 8 } ) )
+		case MS_LONGDOUBLE then
+			return float80_to_atom( peek( { pointer, 10 } ) )
+		case MS_EUDOUBLE then
+			if sizeof( C_POINTER ) = 4 then
+				return float64_to_atom( peek( { pointer, 8 } ) )
+			else
+				return float80_to_atom( peek( { pointer, 10 } ) )
+			end if
+		case else
+			-- just return the struct in bytes
+			return read_member( pointer, sym )
+	end switch
+end function
+
+function read_memstruct( atom pointer, symtab_pointer member_sym )
+	sequence s = {}
+	if sym_token( member_sym ) != MEMSTRUCT then
+		-- we want to walk the actual struct
+		member_sym = SymTab[member_sym][S_MEM_STRUCT]
+	end if
+	while member_sym with entry do
+		s = append( s, peek_member( pointer + SymTab[member_sym][S_MEM_OFFSET], member_sym ) )
+	entry
+		member_sym = SymTab[member_sym][S_MEM_NEXT]
+	end while
+	return s
+end function
+
+function read_memunion( atom pointer, symtab_pointer member_sym )
+	return peek( { pointer, SymTab[member_sym][S_MEM_SIZE] } )
+end function
+
+function read_member( atom pointer, symtab_index sym )
+
+	symtab_pointer member_sym = sym
+	integer tid = sym_token( sym )
+	if tid >= MS_SIGNED and tid <= MS_OBJECT then
+		-- simple serialization of primitives...
+		return peek_member( pointer, sym )
+	end if
+	
+	integer member_token = sym_token( member_sym )
+	if member_token = MEMSTRUCT then
+		return read_memstruct( pointer, member_sym )
+	
+	elsif member_token = MEMUNION then
+		return read_memunion( pointer, member_sym )
+	
+	else
+		member_token = SymTab[SymTab[member_sym][S_MEM_STRUCT]][S_TOKEN]
+		if member_token = MEMSTRUCT then
+			return read_memstruct( pointer, member_sym )
+		
+		elsif member_token = MEMUNION then
+			return read_memunion( pointer, member_sym )
+		else
+			RTFatal( "Cannot serialize a: " & LexName( member_token ) )
+		end if
+	end if
+end function
+
+procedure opMEMSTRUCT_READ()
+	atom pointer = val[Code[pc+1]]
+	val[Code[pc+3]] = read_member( pointer, Code[pc+2] )
+	pc += 4
+end procedure
+
+procedure opPEEK_ARRAY()
+	-- pc+1 pointer
+	-- pc+2 member sym
+	-- pc+3 subscript
+	-- pc+4 target
+	atom 
+		member_sym = Code[pc+2],
+		ptr        = val[Code[pc+1]] + SymTab[member_sym][S_MEM_OFFSET],
+		subscript  = val[Code[pc+3]]
+	val[Code[pc+4]] = peek_member( ptr, member_sym, subscript )
+	pc += 5
+end procedure
+
+procedure opPEEK_MEMBER()
+	-- pc+1 pointer
+	-- pc+2 member
+	-- pc+3 deref ptr
+	-- pc+4 target
+	
+	atom pointer = val[Code[pc+1]]
+	a = Code[pc+2]
+	target = Code[pc+4]
+	
+	val[target] = peek_member( pointer, a, , Code[pc+3] )
+	
+	pc += 5
 end procedure
 
 procedure opPOKE()
@@ -3227,6 +3702,14 @@ procedure opPOKE8()
 	poke8(val[a], val[b])
 	pc += 3
 end procedure
+
+procedure opPOKE_POINTER()
+	a = Code[pc+1]
+	b = Code[pc+2]
+	poke_pointer(val[a], val[b])
+	pc += 3
+end procedure
+
 
 procedure opPOKE2()
 	a = Code[pc+1]
@@ -4089,7 +4572,7 @@ procedure do_exec()
 
 			case EQUALS then
 				opEQUALS()
-
+			
 			case EQUALS_IFW, EQUALS_IFW_I then
 				opEQUALS_IFW()
 
@@ -4320,18 +4803,10 @@ procedure do_exec()
 				opPOKE8()
 			
 			case POKE_POINTER then
-				ifdef BITS32 then
-				    opPOKE4()
-				elsedef
-				    opPOKE8()
-				end ifdef
+				opPOKE_POINTER()
 			
 			case PEEK_POINTER then
-				ifdef BITS32 then
-				    opPEEK4U()
-				elsedef
-				    opPEEK8U()
-				end ifdef
+				opPEEK_POINTER()
 				
 			case POSITION then
 				opPOSITION()
@@ -4494,6 +4969,9 @@ procedure do_exec()
 
 			case TYPE_CHECK then
 				opTYPE_CHECK()
+				
+			case MEM_TYPE_CHECK then
+				opMEM_TYPE_CHECK()
 
 			case UMINUS then
 				opUMINUS()
@@ -4529,6 +5007,35 @@ procedure do_exec()
 				
 			case SIZEOF then
 				opSIZEOF()
+				
+			case MEMSTRUCT_ACCESS then
+				opMEMSTRUCT_ACCESS()
+			
+			case ARRAY_ACCESS then
+				opARRAY_ACCESS()
+			
+			case MEMSTRUCT_ARRAY then
+				opMEMSTRUCT_ARRAY()
+			
+			case PEEK_ARRAY then
+				opPEEK_ARRAY()
+			case PEEK_MEMBER then
+				opPEEK_MEMBER()
+			
+			case MEMSTRUCT_READ then
+				opMEMSTRUCT_READ()
+			
+			case MEMSTRUCT_ASSIGN then
+				opMEMSTRUCT_ASSIGN()
+			
+			case MEMSTRUCT_PLUS, MEMSTRUCT_MINUS, MEMSTRUCT_MULTIPLY, MEMSTRUCT_DIVIDE then
+				opMEMSTRUCT_ASSIGN_OP()
+			
+			case ADDRESSOF then
+				opADDRESSOF()
+			
+			case OFFSETOF then
+				opOFFSETOF()
 
 			case else
 				RTFatal( sprintf("Unknown opcode: %d", op ) )

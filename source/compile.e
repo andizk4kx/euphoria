@@ -8,7 +8,7 @@
 -- values of each variable and operand. This allows it to emit C code that
 -- is more precise and efficient. It doesn't actually emit the C code
 -- until the final pass.
-
+namespace compile
 ifdef ETYPE_CHECK then
 	with type_check
 elsedef
@@ -28,6 +28,7 @@ include std/sequence.e
 include buildsys.e
 include c_decl.e
 include c_out.e
+include c_struct.e
 include cominit.e
 include compress.e
 include emit.e
@@ -43,7 +44,7 @@ include shift.e
 include fwdref.e
 include msgtext.e
 
-integer np, pc
+export integer np, pc
 
 constant MAXLEN = MAXINT - 1000000  -- assumed maximum length of a sequence
 
@@ -138,7 +139,7 @@ sequence loop_stack
 -- Value: 1 = reference count incremented when created
 map:map dead_temp_walking = map:new()
 
-enum
+export constant
 	NO_REFERENCE = 0,
 	NEW_REFERENCE = 1,
 	KEEP_IN_MAP = 0,
@@ -169,7 +170,7 @@ enum
 -- If the object's reference count was incremented, then referenced
 -- should be NEW_REFERENCE, so that it can be cleaned up properly later.
 -- Otherwise, ##referenced## should be NO_REFERENCE.
-procedure create_temp( symtab_index sym, integer referenced )
+export procedure create_temp( symtab_index sym, integer referenced )
 	if is_temp( sym ) then
 		map:put( dead_temp_walking, sym, referenced )
 	end if
@@ -183,7 +184,7 @@ sequence saved_temps = {}
 -- it was created.  If remove_from_map is REMOVE_FROM_MAP, then the temp will
 -- be cleared from the map.  If remove_from_map is KEEP_IN_MAP, then the
 -- temp will be left in the map.
-procedure dispose_temp( symtab_index sym, integer keep, integer remove_from_map )
+export procedure dispose_temp( symtab_index sym, integer keep, integer remove_from_map )
 	if is_temp( sym ) then
 		if find( sym, saved_temps ) then
 			-- this will be deref'd manually
@@ -401,7 +402,7 @@ function SeqElem(integer x)
 	return local_t
 end function
 
-function SeqLen(integer x)
+export function SeqLen(integer x)
 -- the length of a sequence
 	symtab_index s
 	atom len, local_len
@@ -743,7 +744,7 @@ integer deref_type
 integer deref_elem_type
 integer deref_short
 
-procedure CSaveStr(sequence target, integer v, integer a, integer b, integer c)
+export procedure CSaveStr(sequence target, integer v, integer a, integer b, integer c)
 -- save a value (to be deref'd) in immediate target
 -- if value isn't known to be an integer
 	boolean deref_exist
@@ -809,7 +810,7 @@ procedure CSaveStr(sequence target, integer v, integer a, integer b, integer c)
 	end if
 end procedure
 
-procedure CDeRefStr(sequence s)
+export procedure CDeRefStr(sequence s)
 -- DeRef a string name  - see CSaveStr()
 	if length(deref_str) = 0 then
 		return
@@ -845,7 +846,7 @@ procedure CDeRefStr(sequence s)
 	end if
 end procedure
 
-procedure CDeRef(integer v)
+export procedure CDeRef(integer v)
 -- DeRef a var or temp
 	integer temp_type, elem_type
 
@@ -2340,6 +2341,63 @@ sequence target_val
 sequence dblfn
 boolean all_done
 
+procedure sizeof_struct( symtab_index datatype_sym, symtab_index target_sym )
+	sequence tag
+	if sym_token( datatype_sym ) = MEMSTRUCT then
+		tag = "struct"
+	else
+		tag = "union"
+	end if
+	c_stmt( sprintf( "@ = sizeof( %s @);\n", {tag} ), { target_sym, datatype_sym } )
+	CDeRef( target_sym )
+end procedure
+
+procedure do_sizeof( symtab_index datatype_sym, symtab_index target_sym )
+	switch sym_token( datatype_sym ) do
+		case MEMSTRUCT, MEMUNION then
+			sizeof_struct( datatype_sym, target_sym )
+		
+		case MEMTYPE then
+			-- use whatever the actual type is...
+			do_sizeof( SymTab[datatype_sym][S_MEM_PARENT], target_sym )
+		
+		-- memstruct primitives:
+		case MS_CHAR       then c_stmt( "@ = sizeof( char );\n", target_sym, target_sym )
+		case MS_SHORT      then c_stmt( "@ = sizeof( short );\n", target_sym, target_sym )
+		case MS_SIGNED     then c_stmt( "@ = sizeof( int );\n", target_sym, target_sym )
+		case MS_UNSIGNED   then c_stmt( "@ = sizeof( int );\n", target_sym, target_sym )
+		case MS_INT        then c_stmt( "@ = sizeof( int );\n", target_sym, target_sym )
+		case MS_LONG       then c_stmt( "@ = sizeof( long );\n", target_sym, target_sym )
+		case MS_LONGLONG   then c_stmt( "@ = sizeof( long long );\n", target_sym, target_sym )
+		case MS_FLOAT      then c_stmt( "@ = sizeof( float );\n", target_sym, target_sym )
+		case MS_DOUBLE     then c_stmt( "@ = sizeof( double );\n", target_sym, target_sym )
+		case MS_LONGDOUBLE then c_stmt( "@ = sizeof( long double );\n", target_sym, target_sym )
+		case MS_EUDOUBLE   then c_stmt( "@ = sizeof( eudouble );\n", target_sym, target_sym )
+		case MS_OBJECT     then c_stmt( "@ = sizeof( void * );\n", target_sym, target_sym )
+		
+		case else
+			-- Will be evaluated like on of the C_* constants
+			c_stmt("@ = eu_sizeof( @ );\n", { target_sym, datatype_sym }, target_sym )
+			CSaveStr( "_0", target_sym, datatype_sym, 0, 0 )
+			CDeRef( target_sym )
+			dispose_temp( datatype_sym, compile:DISCARD_TEMP, compile:REMOVE_FROM_MAP )
+			
+	end switch
+end procedure
+
+export procedure opSIZEOF()
+	integer
+		datatype_sym = Code[pc+1],
+		target_sym   = Code[pc+2]
+	
+	do_sizeof( datatype_sym, target_sym )
+	
+	SetBBType( target_sym, TYPE_INTEGER, {0, MAXINT}, TYPE_INTEGER, 0 )
+	create_temp( target_sym, 1 )
+	pc += 3
+end procedure
+
+
 procedure opSTARTLINE()
 -- common in Translator, not in Interpreter
 	sequence line
@@ -3634,7 +3692,7 @@ procedure opRHS_SLICE()
 	pc += 5
 end procedure
 
-procedure opTYPE_CHECK()
+procedure opTYPE_CHECK() -- MEM_TYPE_CHECK
 -- type check for a user-defined type
 -- this always follows a type-call
 -- The Translator only performs the type-call and check,
@@ -3653,7 +3711,13 @@ procedure opTYPE_CHECK()
 		c_stmt0("}\n")
 		c_stmt0("}\n")
 	end if
-	pc += 1
+	
+	if Code[pc] = TYPE_CHECK then
+		pc += 1
+	else
+		pc += 2
+	end if
+	
 end procedure
 
 function is_temp( symtab_index sym )
@@ -5826,22 +5890,6 @@ procedure opPEEK()
 	pc += 3
 end procedure
 
-procedure opSIZEOF()
-	integer
-		datatype_sym = Code[pc+1],
-		target_sym   = Code[pc+2]
-	CSaveStr( "_0", target_sym, datatype_sym, 0, 0 )
-	
-	c_stmt("@ = eu_sizeof( @ );\n", { target_sym, datatype_sym }, target_sym )
-	
-	CDeRef( target_sym )
-	
-	dispose_temp( datatype_sym, DISCARD_TEMP, REMOVE_FROM_MAP )
-	SetBBType( target_sym, TYPE_INTEGER, {0, MAXINT}, TYPE_INTEGER, 0 )
-	create_temp( target_sym, 1 )
-	pc += 3
-end procedure
-
 procedure opPOKE()
 -- generate code for poke/2/4/8
 -- should optimize constant address
@@ -6601,6 +6649,7 @@ procedure opTASK_CLOCK_START()
 	pc += 1
 end procedure
 
+
 sequence operation -- routine ids for all opcode handlers
 
 export procedure init_opcodes()
@@ -6614,6 +6663,9 @@ export procedure init_opcodes()
 		switch name do
 			case "AND_BITS" then
 				operation[i] = routine_id("opAND_BITS")
+				
+			case "ADDRESSOF" then
+				operation[i] = routine_id("opADDRESSOF")
 
 			case "AND" then
 				operation[i] = routine_id("opAND")
@@ -6840,6 +6892,27 @@ export procedure init_opcodes()
 			case "MEM_SET" then
 				operation[i] = routine_id("opMEM_SET")
 
+			case "MEMSTRUCT_ACCESS" then
+				operation[i] = routine_id("opMEMSTRUCT_ACCESS")
+				
+			case "PEEK_ARRAY" then
+				operation[i] = routine_id("opPEEK_ARRAY")
+			
+			case "MEMSTRUCT_ARRAY" then
+				operation[i] = routine_id("opMEMSTRUCT_ARRAY")
+				
+			case "PEEK_MEMBER" then
+				operation[i] = routine_id("opPEEK_MEMBER")
+				
+			case "MEMSTRUCT_READ" then
+				operation[i] = routine_id("opMEMSTRUCT_READ")
+				
+			case "MEMSTRUCT_ASSIGN" then
+				operation[i] = routine_id("opMEMSTRUCT_ASSIGN")
+				
+			case "MEMSTRUCT_PLUS", "MEMSTRUCT_MINUS", "MEMSTRUCT_MULTIPLY", "MEMSTRUCT_DIVIDE" then
+				operation[i] = routine_id("opMEMSTRUCT_ASSIGNOP")
+				
 			case "MINUS" then
 				operation[i] = routine_id("opMINUS")
 
@@ -6870,6 +6943,9 @@ export procedure init_opcodes()
 			case "NOTEQ" then
 				operation[i] = routine_id("opNOTEQ")
 
+			case "OFFSETOF" then
+				operation[i] = routine_id("opOFFSETOF")
+			
 			case "OPEN" then
 				operation[i] = routine_id("opOPEN")
 
@@ -7041,9 +7117,9 @@ export procedure init_opcodes()
 			case "TRACE" then
 				operation[i] = routine_id("opTRACE")
 
-			case "TYPE_CHECK" then
+			case "TYPE_CHECK", "MEM_TYPE_CHECK" then
 				operation[i] = routine_id("opTYPE_CHECK")
-
+			
 			case "UMINUS" then
 				operation[i] = routine_id("opUMINUS")
 
@@ -7168,6 +7244,8 @@ export procedure init_opcodes()
 				operation[i] = routine_id("opDEREF_TEMP")
 			case "REF_TEMP" then
 				operation[i] = routine_id("opREF_TEMP")
+			case "ARRAY_ACCESS" then
+				operation[i] = routine_id("opARRAY_ACCESS")
 			case else
 				operation[i] = -1
 		end switch
@@ -7396,7 +7474,7 @@ procedure BackEnd(atom ignore)
 
 	-- prevent conflicts
 	for i = TopLevelSub+1 to length(SymTab) do
-		if sequence(SymTab[i][S_NAME]) and find( SymTab[i][S_TOKEN], {VARIABLE, CONSTANT, ENUM}) then
+		if sequence(SymTab[i][S_NAME]) and  sym_mode( i ) = M_NORMAL and not find( sym_token( i ), { PROC, FUNC, TYPE} ) then --find( SymTab[i][S_TOKEN], {VARIABLE, CONSTANT, ENUM}) then
 			SymTab[i][S_NAME] &= sprintf( "_%d", i )
 		end if
 	end for
@@ -7453,7 +7531,8 @@ procedure BackEnd(atom ignore)
 	m_stmtln("#endif")
 	c_puts("#include <time.h>\n")
 	c_puts("#include \"include/euphoria.h\"\n")
-	c_puts("#include \"main-.h\"\n\n")
+	c_puts("#include \"main-.h\"\n")
+	c_puts("#include \"struct.h\"\n\n")
 
 	m_stmtln("#ifndef _WIN32")
 		m_stmtln("#include <unistd.h>")
@@ -7812,6 +7891,8 @@ procedure BackEnd(atom ignore)
 
 	close(c_code)
 	close(c_h)
+	
+	write_struct_header()
 
 	write_buildfile()
 end procedure

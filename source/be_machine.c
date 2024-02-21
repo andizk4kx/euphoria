@@ -236,7 +236,7 @@ uintptr_t get_pos_int(char *where, object x)
 	if (IS_ATOM_INT(x))
 		return INT_VAL(x);
 	else if (IS_ATOM(x))
-		return (unsigned long)(DBL_PTR(x)->dbl);
+		return (uintptr_t)(DBL_PTR(x)->dbl);
 	else {
 		RTFatal("%s: an integer was expected, not a sequence", where);
 	}
@@ -1914,7 +1914,7 @@ void arm_float80_to_float64( unsigned char *a, unsigned char *b ){
 }
 #endif
 
-static object float_to_atom(object x, int flen)
+object float_to_atom(object x, int flen)
 /* convert a sequence of 4, 8 or 10 bytes in IEEE format to an atom */
 /* must avoid type casts from floating point values that may not be 8-byte aligned. */
 {
@@ -2854,7 +2854,6 @@ object start_backend(object x)
 
 	if (IS_ATOM(x) || x_ptr->length != 16)
 		RTFatal("BACKEND requires a sequence of length 16");
-
 
 	fe.st = (symtab_ptr)     get_pos_int(w, *(x_ptr->base+1));
 	fe.sl = (struct sline *) get_pos_int(w, *(x_ptr->base+2));

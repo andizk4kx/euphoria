@@ -13,6 +13,7 @@ without type_check
 include std/filesys.e
 include std/sort.e
 include std/search.e
+include std/sequence.e
 
 include global.e
 include parser.e
@@ -23,7 +24,12 @@ include shift.e
 include reswords.e
 include block.e
 include emit.e
+include memstruct.e
+include opnames.e
 
+ifdef EUDIS then
+	include dis.e
+end ifdef
 
 -- Tracking forward references
 sequence 
@@ -31,7 +37,8 @@ sequence
 	active_subprogs     = {},
 	active_references   = {},
 	toplevel_references = {},
-	inactive_references = {}
+	inactive_references = {},
+	$
 
 
 enum
@@ -64,6 +71,8 @@ integer fwdref_count = 0
 ifdef EUDIS then
 	include std/map.e
 	export map refs_by_name = map:new()
+	sequence last_ref_name = ""
+	sequence by_name_info = ""
 end ifdef
 
 export procedure clear_fwd_refs()
@@ -94,7 +103,7 @@ procedure resolved_reference( integer ref )
 	integer 
 		file    = forward_references[ref][FR_FILE],
 		subprog = forward_references[ref][FR_SUBPROG]
-	
+
 	integer 
 		tx = 0,
 		ax = 0,
@@ -187,6 +196,9 @@ export procedure set_data( integer ref, object data )
 end procedure
 
 export procedure add_data( integer ref, object data )
+	if atom( forward_references[ref][FR_DATA] ) then
+		forward_references[ref][FR_DATA] = { forward_references[ref][FR_DATA] }
+	end if
 	forward_references[ref][FR_DATA] = append( forward_references[ref][FR_DATA], data )
 end procedure
 
@@ -416,6 +428,104 @@ procedure set_error_info( integer ref )
 	current_file_no = fr[FR_FILE]
 end procedure
 
+
+procedure patch_forward_msmember( token tok, integer ref )
+	sequence fr = forward_references[ref]
+	symtab_index sym = tok[T_SYM]
+	
+	switch fr[FR_OP] do
+		
+		case MEMSTRUCT_DECL then
+			symtab_index member = fr[FR_DATA]
+			switch tok[T_ID] do
+				case MEMSTRUCT_DECL, MEMSTRUCT then
+					-- a forward reference inside a declaration
+					SymTab[member][S_MEM_STRUCT] = sym
+				case  MEMTYPE then
+					-- memtype alias
+					integer real_type_sym = SymTab[sym][S_MEM_PARENT]
+					SymTab[member][S_MEM_STRUCT] = real_type_sym
+					SymTab[member][S_TOKEN]      = sym_token( real_type_sym )
+				case else
+					-- ?? not handled...leave it unreferenced 
+					return
+			end switch
+			
+			SymTab[member][S_SCOPE]    = SC_MEMSTRUCT
+			SymTab[member][S_MEM_SIZE] = SymTab[sym][S_MEM_SIZE]
+			
+			if not SymTab[member][S_MEM_POINTER] then
+				symtab_index parent_sym = SymTab[member][S_MEM_PARENT]
+				recalculate_size( parent_sym )
+			end if
+			resolved_reference( ref )
+		case PEEK_MEMBER, MEMSTRUCT_ACCESS then
+			patch_var_use( ref, fr, sym, 1 )
+		case else
+			-- TODO: ??
+			CompileErr( "Unimplemented: patching forward member with op - []\n", fr[FR_OP] )
+	end switch
+	
+end procedure
+
+procedure patch_forward_memstruct( token tok, integer ref )
+	sequence fr = forward_references[ref]
+	symtab_index sym = tok[T_SYM]
+	
+	switch fr[FR_OP] do
+		case MEMSTRUCT_DECL then
+			-- need to check the size
+			
+			if sym_token( sym ) = MEMTYPE then
+				recalculate_size( SymTab[sym][S_MEM_PARENT] )
+			end if
+			if recalculate_size( sym )> 0 then
+				resolved_reference( ref )
+			end if
+		
+		case VARIABLE then
+			patch_var_use( ref, fr, sym, 1 )
+		
+		case MEMSTRUCT_ACCESS, SIZEOF, OFFSETOF, ADDRESSOF then
+			integer pc = fr[FR_PC]
+			set_code( ref )
+			integer rx = find( -ref, Code, pc )
+			if rx then
+				-- these aren't always emitted
+				Code[rx] = sym
+			end if
+			resolved_reference( ref )
+			
+			if fr[FR_OP] = SIZEOF then
+				break
+			end if
+			
+			for i = 2 to length( fr[FR_DATA] ) do
+				-- clean up any members tied to this
+				integer m_ref = fr[FR_DATA][i]
+				rx = find( -m_ref, Code, pc )
+				if rx then
+					-- look it up
+					integer m_sym = resolve_members( forward_references[m_ref][FR_DATA], sym )
+					if m_sym then
+						Code[rx] = m_sym
+						resolved_reference( m_ref )
+					end if
+				elsif sequence( forward_references[m_ref] ) then
+					
+					resolved_reference( m_ref )
+				end if
+				
+			end for
+			reset_code()
+	
+		case else
+			-- TODO: ??
+			CompileErr( "Unimplemented: patching forward memstruct with op - []\n", fr[FR_OP] )
+	end switch
+	
+end procedure
+
 procedure patch_forward_variable( token tok, integer ref )
 -- forward reference for a variable
 	sequence fr = forward_references[ref]
@@ -436,7 +546,26 @@ procedure patch_forward_variable( token tok, integer ref )
 	else
 		SymTab[sym][S_USAGE] = or_bits( U_READ, SymTab[sym][S_USAGE] )
 	end if
+
+	if sequence( fr[FR_DATA] ) then
+		for i = 1 to length( fr[FR_DATA] ) do
+			object d = fr[FR_DATA][i]
+			if sequence( d ) and d[1] = PAM_RECORD then
+				-- resolving default parameter tokens
+				symtab_index param = d[2]
+				token old = {RECORDED, d[3]}
+				token new = {VARIABLE, sym}
+				SymTab[param][S_CODE] = find_replace( old, SymTab[param][S_CODE], new )
+			end if
+		end for
+		resolved_reference( ref )
+	else
+		patch_var_use( ref, fr, sym )
+	end if
 	
+end procedure
+
+procedure patch_var_use( integer ref, sequence fr, integer sym, integer remove_init_check = 0 )
 	set_code( ref )
 	integer pc = fr[FR_PC]
 	if pc < 1 then
@@ -452,20 +581,13 @@ procedure patch_forward_variable( token tok, integer ref )
 		end while
 		resolved_reference( ref )
 	end if
-
-	if sequence( fr[FR_DATA] ) then
-		for i = 1 to length( fr[FR_DATA] ) do
-			object d = fr[FR_DATA][i]
-			if sequence( d ) and d[1] = PAM_RECORD then
-				-- resolving default parameter tokens
-				symtab_index param = d[2]
-				token old = {RECORDED, d[3]}
-				token new = {VARIABLE, sym}
-				SymTab[param][S_CODE] = find_replace( old, SymTab[param][S_CODE], new )
-			end if
-		end for
-		resolved_reference( ref )
+	
+	if remove_init_check then
+		if Code[pc] = GLOBAL_INIT_CHECK then
+			replace_code( {}, pc, pc+1, fr[FR_SUBPROG])
+		end if
 	end if
+	
 	reset_code()
 end procedure
 
@@ -484,7 +606,6 @@ procedure patch_forward_init_check( token tok, integer ref )
 	end if
 	reset_code()
 end procedure
-
 
 function expected_name( integer id )
 	
@@ -508,13 +629,22 @@ end function
 
 procedure patch_forward_type( token tok, integer ref )
 	sequence fr = forward_references[ref]
-	sequence syms = fr[FR_DATA]
-	for i = 2 to length( syms ) do
-		SymTab[syms[i]][S_VTYPE] = tok[T_SYM]
-		if TRANSLATE then
-			SymTab[syms[i]][S_GTYPE] = CompileType(tok[T_SYM])
+	if sequence( fr[FR_DATA] ) then
+		sequence syms = fr[FR_DATA]
+		
+		if fr[FR_OP] = MEMSTRUCT then
+			for i = 2 to length( syms ) do
+				SymTab[syms[i]][S_MEM_TYPE] = tok[T_SYM]
+			end for
+		else
+			for i = 2 to length( syms ) do
+				SymTab[syms[i]][S_VTYPE] = tok[T_SYM]
+				if TRANSLATE then
+					SymTab[syms[i]][S_GTYPE] = CompileType(tok[T_SYM])
+				end if
+			end for
 		end if
-	end for
+	end if
 	resolved_reference( ref )
 end procedure
 
@@ -563,6 +693,23 @@ procedure patch_forward_case( token tok, integer ref )
 	resolved_reference( ref )
 end procedure
 
+procedure patch_forward_mem_type_check( token tok, integer ref )
+	integer which_type = tok[T_SYM]
+	sequence fr = forward_references[ref]
+	set_code( ref )
+	
+	integer 
+		c   = NewTempSym(),
+		pc  = fr[FR_PC],
+		var = Code[pc+1]
+	
+	SymTab[fr[FR_SUBPROG]][S_STACK_SPACE] += 1
+	replace_code( { PROC, which_type, var, c }, pc, pc+2, fr[FR_SUBPROG] )
+	
+	reset_code()
+	
+	resolved_reference( ref )
+end procedure
 
 procedure patch_forward_type_check( token tok, integer ref )
 	sequence fr = forward_references[ref]
@@ -719,7 +866,21 @@ function find_reference( sequence fr )
 	end if
 	
 	No_new_entry = 1
-	object tok = keyfind( name, ns_file, file, , fr[FR_HASHVAL] )
+	object  tok
+	
+	if fr[FR_TYPE] != MS_MEMBER or atom( fr[FR_DATA] ) then
+		tok = keyfind( name, ns_file, file, , fr[FR_HASHVAL] )
+	else
+		tok = keyfind( fr[FR_DATA][1], ns_file, file )
+		if tok[T_ID] != IGNORED then
+			symtab_pointer member = resolve_members( fr[FR_DATA][2..$], tok[T_SYM] )
+			if member != 0 then
+				tok[T_ID]  = MEMSTRUCT -- sym_token( member )
+				tok[T_SYM] = member
+			end if
+		end if
+	end if
+	
 	No_new_entry = 0
 	return tok
 end function
@@ -792,9 +953,12 @@ export function new_forward_reference( integer fwd_op, symtab_index sym, integer
 	forward_references[ref][FR_QUALIFIED] = get_qualified_fwd()
 	forward_references[ref][FR_OP]        = op
 	
-	if op = GOTO then
-		forward_references[ref][FR_DATA] = { sym }
-	end if
+	switch op do
+		case GOTO then
+			forward_references[ref][FR_DATA] = { sym }
+		case GLOBAL_INIT_CHECK then
+			forward_references[ref][FR_DATA] = sym
+	end switch
 	
 	-- If we're recording tokens (for a default parameter), this ref will never 
 	-- get resolved.  So ignore it for now, and when someone actually calls
@@ -824,18 +988,23 @@ export function new_forward_reference( integer fwd_op, symtab_index sym, integer
 	fwdref_count += 1
 	
 	ifdef EUDIS then
-		sequence name = forward_references[ref][FR_NAME]
-		sequence by_name_info
-		if not map:has( refs_by_name, name ) then
-			by_name_info = { 0, map:new() }
-			map:put( refs_by_name, name, by_name_info )
-		else
-			by_name_info = map:get( refs_by_name, name )
+		if output_fwd then
+			sequence this_name = forward_references[ref][FR_NAME]
+			if compare( this_name, last_ref_name) then
+				-- Variables often get multiple refs due to init checks and type checking,
+				-- so try to avoid some map hashing work if we can
+				last_ref_name = this_name
+				by_name_info = map:get( refs_by_name, last_ref_name, {} )
+				if not length( by_name_info ) then
+					by_name_info = { 0, map:new() }
+				end if
+			end if
+			by_name_info[1] += 1
+			map:put( by_name_info[2], current_file_no, 1, map:ADD )
+			map:put( refs_by_name, last_ref_name, by_name_info )
 		end if
-		by_name_info[1] += 1
-		map:put( by_name_info[2], current_file_no, 1, map:ADD )
-		map:put( refs_by_name, name, by_name_info )
 	end ifdef
+	
 	return ref
 end function
 
@@ -861,6 +1030,7 @@ procedure remove_active_reference( integer ref, integer file_no = current_file_n
 end procedure
 
 function resolve_file( sequence refs, integer report_errors, integer unincluded_ok )
+
 	sequence errors = {}
 	for ar = length( refs ) to 1 by -1 do
 		integer ref = refs[ar]
@@ -914,6 +1084,9 @@ function resolve_file( sequence refs, integer report_errors, integer unincluded_
 					case CONSTANT, ENUM, VARIABLE then
 						patch_forward_variable( tok, ref )
 						break "fr_type"
+					case MEMSTRUCT, MEMUNION then
+						patch_forward_memstruct( tok, ref )
+						break "fr_type"
 					case else
 						forward_error( tok, ref )
 				end switch
@@ -932,6 +1105,15 @@ function resolve_file( sequence refs, integer report_errors, integer unincluded_
 			
 			case GOTO then
 				patch_forward_goto( tok, ref )
+			
+			case MS_MEMBER then
+				patch_forward_msmember( tok, ref )
+			
+			case MEMSTRUCT, MEMTYPE then
+				patch_forward_memstruct( tok, ref )
+			
+			case MEM_TYPE_CHECK then
+				patch_forward_mem_type_check( tok, ref )
 				
 			case else
 				-- ?? what is it?
@@ -985,7 +1167,6 @@ export procedure Resolve_forward_references( integer report_errors = 0 )
 			errors &= resolve_file( toplevel_references[i], report_errors, unincluded_ok )
 		end if
 	end for
-		
 	if report_errors and length( errors ) then
 		sequence msg = ""
 		sequence errloc = "Internal Error - Unknown Error Message"
@@ -1001,6 +1182,7 @@ export procedure Resolve_forward_references( integer report_errors = 0 )
 				object tok = find_reference(ref)
 				integer THIS_SCOPE = 3
 				integer THESE_GLOBALS = 4
+				errloc =""
 				if tok[T_ID] = IGNORED then
 					-- tok is not a token but a sequence of data returned when it cannot find ref
 					switch tok[THIS_SCOPE] do
@@ -1018,8 +1200,36 @@ export procedure Resolve_forward_references( integer report_errors = 0 )
 								end if		
 							else
 								-- unqualified
-								errloc = sprintf("\t\'%s\' (%s:%d) has not been declared.\n", 
-									{ref[FR_NAME], abbreviate_path(known_files[ref[FR_FILE]]), ref[FR_LINE]})
+								if ref[FR_TYPE] = MEMTYPE then
+									if SymTab[ref[FR_DATA]][S_MEM_SIZE] > 0 then
+										continue
+									else
+										errloc = sprintf("\tthe size of \'%s\' (%s:%d) could not be determined.\n", 
+											{ref[FR_NAME], abbreviate_path(known_files[ref[FR_FILE]]), ref[FR_LINE]})
+									end if
+								elsif ref[FR_TYPE] = MS_MEMBER then
+									if ref[FR_OP] = MEMSTRUCT_DECL or ref[FR_OP] = MEMUNION_DECL then
+										errloc = sprintf("\t\tmemtype '%s\' has not been declared (%s:%d)\n",
+												 {
+													ref[FR_NAME],
+													abbreviate_path(known_files[ref[FR_FILE]]),
+													ref[FR_LINE]
+												})
+									else
+										errloc = sprintf("\t\'%s\' (%s:%d) could not be resolved as a member of %s (%s).\n",
+												 {
+													ref[FR_NAME],
+													abbreviate_path(known_files[ref[FR_FILE]]),
+													ref[FR_LINE],
+													join( ref[FR_DATA], "." ),
+													opnames[ref[FR_OP]]
+												})
+									end if
+									
+								else
+									errloc = sprintf("\t\'%s\' (%s:%d) has not been declared.\n", 
+										{ref[FR_NAME], abbreviate_path(known_files[ref[FR_FILE]]), ref[FR_LINE]})
+								end if
 							end if
 						case SC_MULTIPLY_DEFINED then
 							sequence syms = tok[THESE_GLOBALS] -- there should be no forward references in here.
@@ -1033,14 +1243,27 @@ export procedure Resolve_forward_references( integer report_errors = 0 )
 										{find_replace('\\',abbreviate_path(known_files[SymTab[s][S_FILE_NO]]),'/')})
 								end if
 							end for
+	
 						case else 
 							-- anything else okay...
+
 					end switch
+				elsif ref[FR_TYPE] = MS_MEMBER then
+					errloc = sprintf("\t\'%s\' (%s:%d) could not be resolved as a member of %s (%s).\n",
+												{
+												ref[FR_NAME],
+												abbreviate_path(known_files[ref[FR_FILE]]),
+												ref[FR_LINE],
+												join( ref[FR_DATA], "." ),
+												opnames[ref[FR_OP]]
+											})
 				end if
-				if not match(errloc, msg) then
+				
+				if length(errloc) and not match(errloc, msg) then
 					msg &= errloc
 					prep_forward_error( errors[e] )
 				end if
+				
 			end if
 			ThisLine    = ref[FR_THISLINE]
 			bp          = ref[FR_BP]
@@ -1107,6 +1330,8 @@ export procedure shift_fwd_refs( integer pc, integer amount )
 	else
 		integer file = SymTab[shifting_sub][S_FILE_NO]
 		integer sp   = find( shifting_sub, active_subprogs[file] )
-		shift_these( active_references[file][sp], pc, amount )
+		if sp then
+			shift_these( active_references[file][sp], pc, amount )
+		end if
 	end if
 end procedure

@@ -1,6 +1,7 @@
 -- (c) Copyright - See License.txt
 --
 -- Symbol Table Routines
+namespace symtab
 
 ifdef ETYPE_CHECK then
 	with type_check
@@ -29,6 +30,19 @@ export symtab_index object_type       -- s.t. index of object type
 export symtab_index atom_type         -- s.t. index of atom type
 export symtab_index sequence_type     -- s.t. index of sequence type
 export symtab_index integer_type      -- s.t. index of integer type
+
+export symtab_index ms_char_sym
+export symtab_index ms_short_sym
+export symtab_index ms_int_sym
+export symtab_index ms_long_sym
+export symtab_index ms_longlong_sym
+export symtab_index ms_object_sym
+export symtab_index ms_pointer_sym
+export symtab_index ms_float_sym
+export symtab_index ms_double_sym
+export symtab_index ms_longdouble_sym
+export symtab_index ms_eudouble_sym
+
 
 ifdef EUDIS then
 export sequence bucket_hits = repeat( 0, NBUCKETS ) -- count how many times we look at each bucket
@@ -75,7 +89,6 @@ end function
 export procedure remove_symbol( symtab_index sym )
 	integer hash
 	integer st_ptr
-	
 	hash = SymTab[sym][S_HASHVAL]
 	st_ptr = buckets[hash]
 	
@@ -437,6 +450,29 @@ export function NewTempSym( integer inlining = 0)
 	return p
 end function
 
+procedure set_memsize( symtab_index sym, integer kx )
+	sequence key = keylist[kx]
+	if length( SymTab[sym] ) < SIZEOF_MEMSTRUCT_ENTRY then
+		SymTab[sym] &= repeat( 0, SIZEOF_MEMSTRUCT_ENTRY - length( SymTab[sym] ) )
+	end if
+	if length( key ) >= K_MEM_SIZE then
+		SymTab[sym][S_MEM_SIZE] = key[K_MEM_SIZE]
+	end if
+	switch key[K_NAME] do
+		case "char"        then ms_char_sym       = sym
+		case "short"       then ms_short_sym      = sym
+		case "int"         then ms_int_sym        = sym
+		case "long"        then ms_long_sym       = sym
+		case "long long"   then ms_longlong_sym   = sym
+		case "object"      then ms_object_sym     = sym
+		case "float"       then ms_float_sym      = sym
+		case "double"      then ms_double_sym     = sym
+		case "long double" then ms_longdouble_sym = sym
+		case "eudouble"    then ms_eudouble_sym   = sym
+		case "pointer"     then ms_pointer_sym    = sym
+	end switch
+end procedure
+
 export procedure InitSymTab()
 -- Initialize the Symbol Table
 	integer hashval, len
@@ -461,6 +497,7 @@ export procedure InitSymTab()
 			SymTab[st_index][S_OPCODE] = keylist[k][K_OPCODE]
 			SymTab[st_index][S_EFFECT] = keylist[k][K_EFFECT]
 			SymTab[st_index][S_REFLIST] = {}
+			
 			if length(keylist[k]) > K_EFFECT then
 			    SymTab[st_index][S_CODE] = keylist[k][K_CODE]
 			    SymTab[st_index][S_DEF_ARGS] = keylist[k][K_DEF_ARGS]
@@ -481,6 +518,8 @@ export procedure InitSymTab()
 			elsif equal(kname, "sequence") then
 				sequence_type = st_index
 			end if
+		elsif keylist[k][K_SCOPE] = SC_MEMSTRUCT then
+			set_memsize( st_index, k )
 		end if
 		if buckets[hashval] = 0 then
 			buckets[hashval] = st_index
@@ -729,6 +768,16 @@ export function get_resolve_unincluded_globals()
 end function
 
 export integer No_new_entry = 0
+
+integer inside_memstruct = 0
+export procedure enter_memstruct( symtab_index mem_struct )
+	inside_memstruct = mem_struct
+end procedure
+
+export procedure leave_memstruct()
+	inside_memstruct = 0
+end procedure
+
 export function keyfind(sequence word, integer file_no, integer scanning_file = current_file_no, integer namespace_ok = 0, 
 						integer hashval = hashfn( word ) )
 -- Uses hashing algorithm to try to match 'word' in the symbol
@@ -869,6 +918,13 @@ end ifdef
 							add_ref(tok)
 						end if
 
+						return tok
+					end if
+					break
+				
+				case SC_MEMSTRUCT then
+				
+					if inside_memstruct then
 						return tok
 					end if
 					break
@@ -1088,7 +1144,6 @@ end ifdef
 	tok = {VARIABLE, NewEntry(word, 0, defined,
 					   VARIABLE, hashval, buckets[hashval], 0)}
 	buckets[hashval] = tok[T_SYM]
-	
 	if file_no != -1 then
 		SymTab[tok[T_SYM]][S_FILE_NO] = file_no
 	end if
@@ -1100,7 +1155,6 @@ export procedure Hide(symtab_index s)
 -- remove the visibility of a symbol
 -- by deleting it from its hash chain
 	symtab_index prev, p
-	
 	p = buckets[SymTab[s][S_HASHVAL]]
 	prev = 0
 	

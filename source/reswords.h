@@ -169,7 +169,7 @@
 #define END_PARAM_CHECK     156
 #define CONCAT_N            157
 #define NOPWHILE            158 // Translator only
-#define NOP1                159 // Translator only
+#define NOP1                159
 #define PLENGTH             160
 #define LHS_SUBS1           161
 #define PASSIGN_SUBS        162
@@ -229,7 +229,21 @@
 #define PEEK_POINTER        216
 #define SIZEOF              217
 #define STARTLINE_BREAK     218
-#define MAX_OPCODE          218
+#define MEMSTRUCT_ACCESS    219
+#define MEMSTRUCT_ARRAY     220
+#define PEEK_MEMBER         221
+#define MEMSTRUCT_READ 222
+#define MEMSTRUCT_ASSIGN    223 
+#define MEMSTRUCT_PLUS      224
+#define MEMSTRUCT_MINUS     225
+#define MEMSTRUCT_MULTIPLY  226
+#define MEMSTRUCT_DIVIDE    227
+#define MEM_TYPE_CHECK      228
+#define ADDRESSOF           229
+#define OFFSETOF            230
+#define PEEK_ARRAY          231
+#define ARRAY_ACCESS        232
+#define MAX_OPCODE          232
 
 /* remember to update reswords.e, opnames.e,
    opnames.h, optable[], localjumptab[]
@@ -242,6 +256,29 @@
 #define NAMESPACE         523
 #define FUNC              501
 #define TYPE              504
+
+
+#define MEMTYPE              439
+
+#define MEMSTRUCT            524
+#define QUALIFIED_MEMSTRUCT  525
+#define MEMUNION             526
+#define QUALIFIED_MEMUNION   527
+#define MS_SIGNED            528
+#define MS_UNSIGNED          529
+#define MS_POINTER           530
+#define MS_CHAR              531
+#define MS_SHORT             532
+#define MS_INT               533
+#define MS_LONG              534
+#define MS_LONGLONG          535
+#define MS_FLOAT             536
+#define MS_DOUBLE            537
+#define MS_LONGDOUBLE        538
+#define MS_EUDOUBLE          539
+#define MS_OBJECT            540
+#define MS_MEMBER            541
+#define MS_AS                542
 
 //struct key {
 //  char *name;

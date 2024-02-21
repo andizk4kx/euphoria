@@ -49,11 +49,13 @@ procedure init_op_info()
 	op_info_sub = repeat( 0, MAX_OPCODE )
 	
 	op_info[ABORT               ] = { FIXED_SIZE, 2, {}, {}, {} }   -- ary: pun
+	op_info[ADDRESSOF           ] = { FIXED_SIZE, 3, {}, {2}, {} }
 	op_info[AND                 ] = { FIXED_SIZE, 4, {}, {}, {} }   -- ary: bin
 	op_info[AND_BITS            ] = { FIXED_SIZE, 4, {}, {3}, {} }   -- ary: bin
 	op_info[APPEND              ] = { FIXED_SIZE, 4, {}, {3}, {} }   -- ary: bin
 	op_info[ARCTAN              ] = { FIXED_SIZE, 3, {}, {2}, {} }   -- ary: un
 	op_info[ASSIGN              ] = { FIXED_SIZE, 3, {}, {2}, {} }
+	op_info[MEMSTRUCT_ASSIGN    ] = { FIXED_SIZE, 5, {}, {}, {} }
 	op_info[ASSIGN_I            ] = { FIXED_SIZE, 3, {}, {2}, {} }
 	op_info[ASSIGN_OP_SLICE     ] = { FIXED_SIZE, 5, {}, {4}, {} }
 	op_info[ASSIGN_OP_SUBS      ] = { FIXED_SIZE, 4, {}, {3}, {} }
@@ -81,6 +83,7 @@ procedure init_op_info()
 	op_info[DELETE_OBJECT       ] = { FIXED_SIZE, 2, {}, {}, {} }
 	op_info[DIV2                ] = { FIXED_SIZE, 4, {}, {3}, {} }
 	op_info[DIVIDE              ] = { FIXED_SIZE, 4, {}, {3}, {} }
+	op_info[MEMSTRUCT_DIVIDE    ] = { FIXED_SIZE, 5, {}, {},  {} }
 	op_info[ELSE                ] = { FIXED_SIZE, 2, {1}, {}, {} }
 	op_info[EXIT                ] = { FIXED_SIZE, 2, {1}, {}, {} }
 	op_info[EXIT_BLOCK          ] = { FIXED_SIZE, 2, {},  {}, {} }
@@ -139,9 +142,13 @@ procedure init_op_info()
 	op_info[MATCH_FROM          ] = { FIXED_SIZE, 5, {}, {4}, {} }
 	op_info[MEM_COPY            ] = { FIXED_SIZE, 4, {}, {}, {} }
 	op_info[MEM_SET             ] = { FIXED_SIZE, 4, {}, {}, {} }
+	op_info[MEMSTRUCT_ARRAY     ] = { FIXED_SIZE, 5, {}, {4}, {} }
+	op_info[MEMSTRUCT_READ      ] = { FIXED_SIZE, 4, {}, {3}, {} }
 	op_info[MINUS               ] = { FIXED_SIZE, 4, {}, {3}, {} }
+	op_info[MEMSTRUCT_MINUS     ] = { FIXED_SIZE, 5, {}, {},  {} }
 	op_info[MINUS_I             ] = { FIXED_SIZE, 4, {}, {3}, {} }
 	op_info[MULTIPLY            ] = { FIXED_SIZE, 4, {}, {3}, {} }
+	op_info[MEMSTRUCT_MULTIPLY  ] = { FIXED_SIZE, 5, {}, {},  {} }
 	op_info[NOP1                ] = { FIXED_SIZE, 1, {}, {}, {} }
 	op_info[NOPWHILE            ] = { FIXED_SIZE, 1, {}, {}, {} }
 	op_info[NOP2                ] = { FIXED_SIZE, 2, {}, {}, {} }
@@ -165,6 +172,8 @@ procedure init_op_info()
 	op_info[PASSIGN_OP_SUBS     ] = { FIXED_SIZE, 4, {}, {3}, {} }
 	op_info[PASSIGN_SLICE       ] = { FIXED_SIZE, 5, {}, {1}, {} }
 	op_info[PASSIGN_SUBS        ] = { FIXED_SIZE, 4, {}, {1}, {} }
+	op_info[PEEK_ARRAY          ] = { FIXED_SIZE, 5, {}, {4}, {} }
+	op_info[PEEK_MEMBER         ] = { FIXED_SIZE, 5, {}, {4}, {} }
 	op_info[PEEK_STRING         ] = { FIXED_SIZE, 3, {}, {2}, {} }
 	op_info[PEEK8U              ] = { FIXED_SIZE, 3, {}, {2}, {} }
 	op_info[PEEK8S              ] = { FIXED_SIZE, 3, {}, {2}, {} }
@@ -178,6 +187,7 @@ procedure init_op_info()
 	op_info[PEEK_POINTER        ] = { FIXED_SIZE, 3, {}, {2}, {} }
 	op_info[PLENGTH             ] = { FIXED_SIZE, 3, {}, {2}, {} }
 	op_info[PLUS                ] = { FIXED_SIZE, 4, {}, {3}, {} }
+	op_info[MEMSTRUCT_PLUS      ] = { FIXED_SIZE, 5, {}, {},  {} }
 	op_info[PLUS_I              ] = { FIXED_SIZE, 4, {}, {3}, {} }
 	op_info[PLUS1               ] = { FIXED_SIZE, 4, {}, {3}, {} }
 	op_info[PLUS1_I             ] = { FIXED_SIZE, 4, {}, {3}, {} }
@@ -240,6 +250,7 @@ procedure init_op_info()
 	op_info[TIME                ] = { FIXED_SIZE, 2, {}, {1}, {} }
 	op_info[TRACE               ] = { FIXED_SIZE, 2, {}, {}, {} }
 	op_info[TYPE_CHECK          ] = { FIXED_SIZE, 1, {}, {}, {} }
+	op_info[MEM_TYPE_CHECK      ] = { FIXED_SIZE, 2, {}, {}, {} }
 	op_info[UMINUS              ] = { FIXED_SIZE, 3, {}, {2}, {} }
 	op_info[UPDATE_GLOBALS      ] = { FIXED_SIZE, 1, {}, {}, {} }
 	op_info[WHILE               ] = { FIXED_SIZE, 3, {2}, {}, {} }
@@ -277,6 +288,9 @@ procedure init_op_info()
 	op_info[PROC                ] = { VARIABLE_SIZE, 0, {}, {}, {} }
 	op_info[PROC_TAIL           ] = op_info[PROC]
 	
+	op_info[MEMSTRUCT_ACCESS    ] = { VARIABLE_SIZE, 0, {}, {}, {} } -- TARGET: [pc+1] + 2
+	op_info[ARRAY_ACCESS        ] = { VARIABLE_SIZE, 0, {}, {}, {} } -- TARGET: [pc+1] + 3
+	op_info[OFFSETOF            ] = { VARIABLE_SIZE, 0, {}, {}, {} }
 
 	for i = 1 to MAX_OPCODE do
 		object info = op_info[i]
@@ -305,9 +319,15 @@ function variable_op_size( integer pc, integer op, sequence code = Code )
 		case FUNC_FORWARD then
 			int = code[pc+2]
 			int += 4
-		case RIGHT_BRACE_N, CONCAT_N then
+		case RIGHT_BRACE_N, CONCAT_N, OFFSETOF then
 			int = code[pc+1]
 			int += 3
+			case MEMSTRUCT_ACCESS then
+				int = code[pc+1]
+				int += 4
+			case ARRAY_ACCESS then
+				int = code[pc+1]
+				int += 5
 		case else
 			InternalErr( 269, {op} )
 	end switch
@@ -542,9 +562,11 @@ export function get_target_sym( sequence opseq )
 			case FUNC_FORWARD then
 				return opseq[$]
 
-			case RIGHT_BRACE_N, CONCAT_N then
+			case RIGHT_BRACE_N, CONCAT_N, MEMSTRUCT_ACCESS then
 				return opseq[opseq[2]+2]
 				
+			case ARRAY_ACCESS then
+				return opseq[opseq[2]+3]
 
 		end switch
 	end if

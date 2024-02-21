@@ -1797,7 +1797,10 @@ export function Scanner()
 				if ch = '-' or ch = '+' or char_class[ch] = DIGIT then
 					yytext &= ch
 				else
-					CompileErr(EXPONENT_NOT_FORMED_CORRECTLY)
+					-- memstruct dot notation
+					ungetch()
+					ungetch()
+					return { DOT, 0 }
 				end if
 				ch = getch()
 				while char_class[ch] = DIGIT do
@@ -1805,7 +1808,8 @@ export function Scanner()
 					ch = getch()
 				end while
 			elsif char_class[ch] = LETTER then
-				CompileErr(PUNCTUATION_MISSING_IN_BETWEEN_NUMBER_AND_1, {{ch}})
+				ungetch()
+				return { DOT, 0 }
 			end if
 
 			ungetch()
@@ -1837,6 +1841,10 @@ export function Scanner()
 				CompileErr(ONLY_INTEGER_LITERALS_CAN_USE_THE_01_FORMAT, nbasecode[basetype])
 			end if
 
+			if equal( ".", yytext ) then
+				return { DOT, 0 }
+			end if
+			
 			-- f.p. or large int
 			d = my_sscanf(yytext)
 			if sequence(d) then

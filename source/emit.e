@@ -23,6 +23,7 @@ include c_out.e
 include block.e
 include shift.e
 include coverage.e
+include msgtext.e
 
 export integer op_info1, op_info2
 export integer optimized_while
@@ -35,8 +36,8 @@ export  boolean lhs_ptr = FALSE  -- are we parsing multiple LHS subscripts?
 -- temps needed for LHS subscripting
 export symtab_index lhs_subs1_copy_temp, lhs_target_temp
 -- Code generation Stack
-sequence cg_stack -- expression stack
-integer cgi -- expression stack top-of-stack index
+export sequence cg_stack -- expression stack
+export integer cgi -- expression stack top-of-stack index
 
 boolean assignable  = FALSE  -- did previous op have a re-assignable result?
 
@@ -127,7 +128,30 @@ constant token_name =
 	{WITH, "with"},
 	{WITHOUT, "without"},
 	{WHILE, "while"},
-	{'?', "?"}
+	{'?', "?"},
+	{MEMSTRUCT, "a memstruct"},
+	{MEMUNION, "a memunion"},
+	{MEMSTRUCT_ASSIGN, "="},
+	{MEMSTRUCT_PLUS, "+="},
+	{MEMSTRUCT_MINUS, "-="},
+	{MEMSTRUCT_MULTIPLY, "*="},
+	{MEMSTRUCT_DIVIDE, "/="},
+	{MS_CHAR, "char"},
+	{MS_SHORT, "short"},
+	{MS_INT, "int" },
+	{MS_LONG, "long int" },
+	{MS_LONGLONG, "long long int" },
+	{MS_FLOAT, "float" },
+	{MS_DOUBLE, "double" },
+	{MS_LONGDOUBLE, "long double" },
+	{MS_EUDOUBLE, "eudouble" },
+	{MS_OBJECT, "object" },
+	{MS_POINTER, "pointer" },
+	{MS_SIGNED, "signed" },
+	{MS_UNSIGNED, "unsigned" },
+	{MS_MEMBER, "a memstruct member"},
+	{MEMTYPE, "a memtype"},
+	$
 }
 
 export procedure Push(symtab_pointer x)
@@ -482,6 +506,7 @@ op_result[HEAD] = T_SEQUENCE
 op_result[TAIL] = T_SEQUENCE
 op_result[REMOVE] = T_SEQUENCE
 op_result[REPLACE] = T_SEQUENCE
+op_result[PEEK_ARRAY] = T_SEQUENCE
 
 sequence op_temp_ref = repeat( NO_REFERENCE, MAX_OPCODE )
 op_temp_ref[RIGHT_BRACE_N]    = NEW_REFERENCE
@@ -572,6 +597,9 @@ op_temp_ref[LOG]              = NEW_REFERENCE
 op_temp_ref[GETS]             = NEW_REFERENCE
 op_temp_ref[GETENV]           = NEW_REFERENCE
 op_temp_ref[RAND]             = NEW_REFERENCE
+op_temp_ref[PEEK_ARRAY]       = NEW_REFERENCE
+op_temp_ref[PEEK_MEMBER]      = NEW_REFERENCE
+op_temp_ref[MEMSTRUCT_READ]   = NEW_REFERENCE
 
 procedure cont11ii(integer op, boolean ii)
 -- if ii is TRUE then integer arg always produces integer result
@@ -1440,9 +1468,51 @@ export procedure emit_op(integer op)
 	-- 2 inputs, 1 output
 	case MINUS, rw:APPEND, PREPEND, COMPARE, EQUAL,
 					SYSTEM_EXEC, rw:CONCAT, REPEAT, MACHINE_FUNC, C_FUNC,
-					SPRINTF, TASK_CREATE, HASH, HEAD, TAIL, DELETE_ROUTINE then
+					SPRINTF, TASK_CREATE, HASH, HEAD, TAIL, DELETE_ROUTINE,
+					MEMSTRUCT_READ  then
 		cont21ii(op, FALSE)
 
+	case OFFSETOF then
+		-- last OP should have been PEEK_MEMBER
+		if length( Code ) < 4 then
+			CompileErr( MISSING_MEMSTRUCT_MEMBER )
+		elsif Code[$-4] != PEEK_MEMBER and Code[$-1] != MEMSTRUCT_READ then
+			InternalErr("Expected to replace PEEK_MEMBER or MEMSTRUCT_READ")
+		end if
+		
+		Code = remove( Code, length( Code ) - 4, length( Code ) )
+		Pop()
+		Push( Code[$] )
+		for pc = length( Code ) - 2 to 1 by -1 do
+			if Code[pc] = MEMSTRUCT_ACCESS then
+				Code[pc] = OFFSETOF
+				Code = remove( Code, pc + 2 ) -- get rid of the initial pointer
+				exit
+			elsif Code[pc] < 0 then
+				-- ??
+			
+			elsif Code[pc] > TopLevelSub then
+				if SymTab[Code[pc]][S_MEM_POINTER] then
+					CompileErr( OFFSET_DEREFERENCED_POINTER, { sym_name( Code[pc] ) } )
+				end if
+			end if
+		end for
+		
+	case ADDRESSOF then
+		-- last OP should have been PEEK_MEMBER
+		if length( Code ) < 4 then
+			CompileErr( MISSING_MEMSTRUCT_MEMBER )
+		elsif Code[$-4] != PEEK_MEMBER and Code[$-1] != MEMSTRUCT_READ then
+			InternalErr("Expected to replace PEEK_MEMBER or MEMSTRUCT_READ")
+		end if
+		
+		-- We'll replace PEEK_MEMBER with ADDRESSOF
+		Pop()
+		Push( Code[$-3] )
+		Code = remove( Code, length( Code ) - 4, length( Code ) )
+		
+		cont11ii(op, FALSE)
+		
 	case SC2_NULL then  -- correct the stack - we aren't emitting anything
 		c = Pop()
 		TempKeep(c)
@@ -1474,7 +1544,8 @@ export procedure emit_op(integer op)
 		assignable = FALSE
 
 	-- 3 inputs, 1 output
-	case RHS_SLICE, FIND, MATCH, FIND_FROM, MATCH_FROM, SPLICE, INSERT, REMOVE, OPEN then
+	case RHS_SLICE, FIND, MATCH, FIND_FROM, MATCH_FROM, SPLICE, INSERT, REMOVE, OPEN,
+		MEMSTRUCT_ARRAY, PEEK_ARRAY, PEEK_MEMBER then
 		emit_opcode(op)
 		c = Pop()
 		b = Pop()
@@ -1741,6 +1812,13 @@ export procedure emit_op(integer op)
 		c = Pop()
 		assignable = FALSE
 
+	case MEM_TYPE_CHECK then
+		-- 1 input, 0 output
+		emit_opcode(op)
+		c = Pop()
+		emit_addr( c )
+		assignable = FALSE
+	
 	-- 0 inputs, 1 output, special op
 	case DOLLAR then
 		if current_sequence[$] < 0 or SymTab[current_sequence[$]][S_SCOPE] = SC_UNDEFINED then
@@ -1834,6 +1912,31 @@ export procedure emit_op(integer op)
 		end if
 		assignable = FALSE
 	
+	case MEMSTRUCT_ACCESS, ARRAY_ACCESS then
+		a = Pop() -- number of elements
+		if op = ARRAY_ACCESS then
+			-- subscript:
+			b = Pop()
+		end if
+		sequence members = repeat( 0, a )
+		for i = a to 1 by -1 do
+			members[i] = Pop()
+		end for
+		
+		emit_opcode( op )
+		emit_addr( a )
+		emit_addr( Pop() )
+		for i = 1 to length( members ) do
+			emit_addr( members[i] )
+		end for
+		if op = ARRAY_ACCESS then
+			-- subscript:
+			emit_addr( b )
+		end if
+		c = NewTempSym()
+		Push( c )
+		emit_addr( c )
+		assignable = FALSE
 	case REF_TEMP then
 		-- Used by the Translator to save temps
 		emit_opcode( REF_TEMP )
@@ -1842,7 +1945,22 @@ export procedure emit_op(integer op)
 	case DEREF_TEMP then
 		emit_opcode( DEREF_TEMP )
 		emit_addr( Pop() )
+	
+	case MEMSTRUCT_ASSIGN, MEMSTRUCT_PLUS, MEMSTRUCT_MINUS, 
+			MEMSTRUCT_DIVIDE, MEMSTRUCT_MULTIPLY then
 		
+		c = Pop() -- new value
+		integer deref_ptr = Pop()
+		b = Pop() -- member sym
+		a = Pop() -- pointer
+		
+		emit_opcode( op )
+		emit_addr( a )
+		emit_addr( b )
+		emit_addr( c )
+		emit_addr( deref_ptr )
+		assignable = FALSE
+	
 	case else
 		InternalErr(259, {op})
 

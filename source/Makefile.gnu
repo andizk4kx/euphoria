@@ -340,6 +340,7 @@ EU_CORE_FILES = \
 	$(TRUNKDIR)/source/inline.e \
 	$(TRUNKDIR)/source/keylist.e \
 	$(TRUNKDIR)/source/main.e \
+	$(TRUNKDIR)/source/memstruct.e \
 	$(TRUNKDIR)/source/msgtext.e \
 	$(TRUNKDIR)/source/mode.e \
 	$(TRUNKDIR)/source/opnames.e \
@@ -368,6 +369,7 @@ EU_TRANSLATOR_FILES = \
 	$(TRUNKDIR)/source/buildsys.e \
 	$(TRUNKDIR)/source/c_decl.e \
 	$(TRUNKDIR)/source/c_out.e \
+	$(TRUNKDIR)/source/c_struct.e \
 	$(TRUNKDIR)/source/cominit.e \
 	$(TRUNKDIR)/source/compile.e \
 	$(TRUNKDIR)/source/compress.e \
@@ -407,6 +409,7 @@ EU_BACKEND_OBJECTS = \
 	$(BUILDDIR)/$(OBJDIR)/back/be_symtab.o \
 	$(BUILDDIR)/$(OBJDIR)/back/be_socket.o \
 	$(BUILDDIR)/$(OBJDIR)/back/be_w.o \
+	$(BUILDDIR)/$(OBJDIR)/back/be_memstruct.o \
 	$(PREFIXED_PCRE_OBJECTS)
 
 EU_LIB_OBJECTS = \
@@ -925,6 +928,7 @@ install :
 	mkdir -p $(DESTDIR)$(PREFIX)/share/euphoria/include/euphoria/debug
 	mkdir -p $(DESTDIR)$(PREFIX)/share/euphoria/include/std/win32
 	mkdir -p $(DESTDIR)$(PREFIX)/share/euphoria/include/std/net
+	mkdir -p $(DESTDIR)$(PREFIX)/share/euphoria/include/std/memstruct
 	mkdir -p $(DESTDIR)$(PREFIX)/share/euphoria/demo/langwar
 	mkdir -p $(DESTDIR)$(PREFIX)/share/euphoria/demo/unix
 	mkdir -p $(DESTDIR)$(PREFIX)/share/euphoria/demo/net
@@ -959,6 +963,7 @@ endif
 	install $(TRUNKDIR)/include/*e  $(DESTDIR)$(PREFIX)/share/euphoria/include
 	install $(TRUNKDIR)/include/std/*e  $(DESTDIR)$(PREFIX)/share/euphoria/include/std
 	install $(TRUNKDIR)/include/std/net/*e  $(DESTDIR)$(PREFIX)/share/euphoria/include/std/net
+	install $(TRUNKDIR)/include/std/memstruct/*e  $(DESTDIR)$(PREFIX)/share/euphoria/include/std/memstruct
 	install $(TRUNKDIR)/include/std/win32/*e  $(DESTDIR)$(PREFIX)/share/euphoria/include/std/win32
 	install $(TRUNKDIR)/include/euphoria/*.e  $(DESTDIR)$(PREFIX)/share/euphoria/include/euphoria
 	install $(TRUNKDIR)/include/euphoria/debug/*.e  $(DESTDIR)$(PREFIX)/share/euphoria/include/euphoria/debug
@@ -1208,7 +1213,7 @@ $(BUILDDIR)/intobj/back/be_execute.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKDIR
 $(BUILDDIR)/intobj/back/be_execute.o: $(TRUNKDIR)/source/be_inline.h $(TRUNKDIR)/source/be_machine.h $(TRUNKDIR)/source/be_task.h
 $(BUILDDIR)/intobj/back/be_execute.o: $(TRUNKDIR)/source/be_rterror.h $(TRUNKDIR)/source/be_symtab.h $(TRUNKDIR)/source/be_w.h
 $(BUILDDIR)/intobj/back/be_execute.o: $(TRUNKDIR)/source/be_callc.h $(TRUNKDIR)/source/be_coverage.h $(TRUNKDIR)/source/be_execute.h
-$(BUILDDIR)/intobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h
+$(BUILDDIR)/intobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h $(TRUNKDIR)/source/be_memstruct.h
 $(BUILDDIR)/intobj/back/be_inline.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/intobj/back/be_inline.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/intobj/back/be_machine.o: $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h $(TRUNKDIR)/source/alldefs.h
@@ -1222,6 +1227,9 @@ $(BUILDDIR)/intobj/back/be_main.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/sour
 $(BUILDDIR)/intobj/back/be_main.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/intobj/back/be_main.o: $(TRUNKDIR)/source/be_execute.h $(TRUNKDIR)/source/be_alloc.h $(TRUNKDIR)/source/be_rterror.h
 $(BUILDDIR)/intobj/back/be_main.o: $(TRUNKDIR)/source/be_w.h
+$(BUILDDIR)/intobj/back/be_memstruct.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
+$(BUILDDIR)/intobj/back/be_memstruct.o: $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h $(TRUNKDIR)/source/be_machine.h
+$(BUILDDIR)/intobj/back/be_memstruct.o: $(TRUNKDIR)/source/be_memstruct.h $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/intobj/back/be_pcre.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/intobj/back/be_pcre.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/intobj/back/be_pcre.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKDIR)/source/be_pcre.h $(TRUNKDIR)/source/pcre/pcre.h
@@ -1277,7 +1285,7 @@ $(BUILDDIR)/transobj/back/be_execute.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKD
 $(BUILDDIR)/transobj/back/be_execute.o: $(TRUNKDIR)/source/be_inline.h $(TRUNKDIR)/source/be_machine.h $(TRUNKDIR)/source/be_task.h
 $(BUILDDIR)/transobj/back/be_execute.o: $(TRUNKDIR)/source/be_rterror.h $(TRUNKDIR)/source/be_symtab.h $(TRUNKDIR)/source/be_w.h
 $(BUILDDIR)/transobj/back/be_execute.o: $(TRUNKDIR)/source/be_callc.h $(TRUNKDIR)/source/be_coverage.h $(TRUNKDIR)/source/be_execute.h
-$(BUILDDIR)/transobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h
+$(BUILDDIR)/transobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h $(TRUNKDIR)/source/be_memstruct.h
 $(BUILDDIR)/transobj/back/be_inline.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/transobj/back/be_inline.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/transobj/back/be_machine.o: $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h $(TRUNKDIR)/source/alldefs.h
@@ -1292,6 +1300,10 @@ $(BUILDDIR)/transobj/back/be_main.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/so
 $(BUILDDIR)/transobj/back/be_main.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/transobj/back/be_main.o: $(TRUNKDIR)/source/be_execute.h $(TRUNKDIR)/source/be_alloc.h $(TRUNKDIR)/source/be_rterror.h
 $(BUILDDIR)/transobj/back/be_main.o: $(TRUNKDIR)/source/be_w.h
+$(BUILDDIR)/transobj/back/be_memstruct.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h
+$(BUILDDIR)/transobj/back/be_memstruct.o: $(TRUNKDIR)/source/symtab.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
+$(BUILDDIR)/transobj/back/be_memstruct.o: $(TRUNKDIR)/source/be_machine.h $(TRUNKDIR)/source/be_memstruct.h
+$(BUILDDIR)/transobj/back/be_memstruct.o: $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/transobj/back/be_pcre.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/transobj/back/be_pcre.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/transobj/back/be_pcre.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKDIR)/source/be_pcre.h $(TRUNKDIR)/source/pcre/pcre.h
@@ -1348,7 +1360,7 @@ $(BUILDDIR)/backobj/back/be_execute.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKDI
 $(BUILDDIR)/backobj/back/be_execute.o: $(TRUNKDIR)/source/be_inline.h $(TRUNKDIR)/source/be_machine.h $(TRUNKDIR)/source/be_task.h
 $(BUILDDIR)/backobj/back/be_execute.o: $(TRUNKDIR)/source/be_rterror.h $(TRUNKDIR)/source/be_symtab.h $(TRUNKDIR)/source/be_w.h
 $(BUILDDIR)/backobj/back/be_execute.o: $(TRUNKDIR)/source/be_callc.h $(TRUNKDIR)/source/be_coverage.h $(TRUNKDIR)/source/be_execute.h
-$(BUILDDIR)/backobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h
+$(BUILDDIR)/backobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h $(TRUNKDIR)/source/be_memstruct.h
 $(BUILDDIR)/backobj/back/be_inline.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/backobj/back/be_inline.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/backobj/back/be_machine.o: $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h $(TRUNKDIR)/source/alldefs.h
@@ -1362,6 +1374,9 @@ $(BUILDDIR)/backobj/back/be_main.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/sou
 $(BUILDDIR)/backobj/back/be_main.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/backobj/back/be_main.o: $(TRUNKDIR)/source/be_execute.h $(TRUNKDIR)/source/be_alloc.h $(TRUNKDIR)/source/be_rterror.h
 $(BUILDDIR)/backobj/back/be_main.o: $(TRUNKDIR)/source/be_w.h
+$(BUILDDIR)/backobj/back/be_memstruct.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
+$(BUILDDIR)/backobj/back/be_memstruct.o: $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h $(TRUNKDIR)/source/be_machine.h
+$(BUILDDIR)/backobj/back/be_memstruct.o: $(TRUNKDIR)/source/be_memstruct.h $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/backobj/back/be_pcre.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/backobj/back/be_pcre.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/backobj/back/be_pcre.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKDIR)/source/be_pcre.h $(TRUNKDIR)/source/pcre/pcre.h
@@ -1417,7 +1432,7 @@ $(BUILDDIR)/libobj/back/be_execute.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKDIR
 $(BUILDDIR)/libobj/back/be_execute.o: $(TRUNKDIR)/source/be_inline.h $(TRUNKDIR)/source/be_machine.h $(TRUNKDIR)/source/be_task.h
 $(BUILDDIR)/libobj/back/be_execute.o: $(TRUNKDIR)/source/be_rterror.h $(TRUNKDIR)/source/be_symtab.h $(TRUNKDIR)/source/be_w.h
 $(BUILDDIR)/libobj/back/be_execute.o: $(TRUNKDIR)/source/be_callc.h $(TRUNKDIR)/source/be_coverage.h $(TRUNKDIR)/source/be_execute.h
-$(BUILDDIR)/libobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h
+$(BUILDDIR)/libobj/back/be_execute.o: $(TRUNKDIR)/source/be_debug.h $(TRUNKDIR)/source/be_memstruct.h
 $(BUILDDIR)/libobj/back/be_inline.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/libobj/back/be_inline.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/libobj/back/be_machine.o: $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h $(TRUNKDIR)/source/alldefs.h
@@ -1431,6 +1446,9 @@ $(BUILDDIR)/libobj/back/be_main.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/sour
 $(BUILDDIR)/libobj/back/be_main.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/libobj/back/be_main.o: $(TRUNKDIR)/source/be_execute.h $(TRUNKDIR)/source/be_alloc.h $(TRUNKDIR)/source/be_rterror.h
 $(BUILDDIR)/libobj/back/be_main.o: $(TRUNKDIR)/source/be_w.h
+$(BUILDDIR)/libobj/back/be_memstruct.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
+$(BUILDDIR)/libobj/back/be_memstruct.o: $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h $(TRUNKDIR)/source/be_machine.h
+$(BUILDDIR)/libobj/back/be_memstruct.o: $(TRUNKDIR)/source/be_memstruct.h $(TRUNKDIR)/source/be_runtime.h
 $(BUILDDIR)/libobj/back/be_pcre.o: $(TRUNKDIR)/source/alldefs.h $(TRUNKDIR)/source/global.h $(TRUNKDIR)/source/object.h $(TRUNKDIR)/source/symtab.h
 $(BUILDDIR)/libobj/back/be_pcre.o: $(TRUNKDIR)/source/execute.h $(TRUNKDIR)/source/reswords.h $(TRUNKDIR)/source/be_alloc.h
 $(BUILDDIR)/libobj/back/be_pcre.o: $(TRUNKDIR)/source/be_runtime.h $(TRUNKDIR)/source/be_pcre.h $(TRUNKDIR)/source/pcre/pcre.h

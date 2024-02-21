@@ -1069,7 +1069,7 @@ procedure next_token(atom state = g_state)
 				Token[TDATA] &= Look
 
 				scan_char(state)
-			else
+			elsif find( Look, "0123456789" )  then
 				-- .number
 				integer start_char = sti - 1
 				Token[TTYPE] = T_NUMBER
@@ -1081,6 +1081,10 @@ procedure next_token(atom state = g_state)
 				if eumem:ram_space[state][STRING_NUMBERS] then
 					Token[TDATA] = source_text[start_char..sti-1]
 				end if
+			else
+				-- memstruct dot notation
+				Token[TTYPE] = T_PERIOD
+				
 			end if
 
 		elsif (Look = '-') and (Token[TTYPE] = T_MINUS) then

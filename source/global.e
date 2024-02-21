@@ -157,6 +157,21 @@ export constant
 	                         -- external call, e.g. call to a DLL
 	S_HAS_DELETE = 54
 
+-- for memstructs / memunions only
+export constant
+	S_MEM_SIZE    = 14 - get_backend() * 5,
+	S_MEM_OFFSET  = 15 - get_backend() * 5,
+	S_MEM_SIGNED  = 16 - get_backend() * 5,
+	S_MEM_POINTER = 17 - get_backend() * 5,
+	S_MEM_ARRAY   = 18 - get_backend() * 5,
+	S_MEM_NEXT    = 19 - get_backend() * 5,
+	S_MEM_STRUCT  = 20 - get_backend() * 5,  -- for embedded structs
+	S_MEM_PARENT  = 21 - get_backend() * 5,
+	S_MEM_TYPE    = 22 - get_backend() * 5,
+	S_MEM_RECALC  = 23 - get_backend() * 5,
+	S_MEM_PACK    = 24 - get_backend() * 5,
+	$
+
 export procedure print_sym(integer s)
 	printf(1,"[%d]:\n", {s} )
 	object s_obj = SymTab[s][S_OBJ]
@@ -185,8 +200,9 @@ export constant
 	SIZEOF_ROUTINE_ENTRY = 30 + 25 * TRANSLATE,
 	SIZEOF_VAR_ENTRY     = 17 + 37 * TRANSLATE,
 	SIZEOF_BLOCK_ENTRY   = 19 + 35 * TRANSLATE,
-	SIZEOF_TEMP_ENTRY    =  6 + 32 * TRANSLATE
-
+	SIZEOF_TEMP_ENTRY    =  6 + 32 * TRANSLATE,
+	SIZEOF_MEMSTRUCT_ENTRY = 24 + 31 * TRANSLATE - 5 * get_backend(),
+	$
 -- Permitted values for various symbol table fields
 
 -- MODE values:
@@ -200,7 +216,8 @@ export constant M_VARS = {M_TEMP, M_NORMAL}
 	
 -- SCOPE values:
 export enum
-	SC_LOOP_VAR=2,    -- "private" loop vars known within a single loop
+	SC_NONE,
+	SC_LOOP_VAR,    -- "private" loop vars known within a single loop
 	SC_PRIVATE,    -- private within subprogram
 	SC_GLOOP_VAR,   -- "global" loop var
 	SC_LOCAL,    -- local to the file
@@ -211,7 +228,8 @@ export enum
 	SC_MULTIPLY_DEFINED,  -- global symbol defined in 2 or more files
 	SC_EXPORT,   -- visible to anyone that includes the file
 	SC_OVERRIDE, -- override an internal
-	SC_PUBLIC    -- visible to any file that includes it, or via "public include"
+	SC_PUBLIC,   -- visible to any file that includes it, or via "public include"
+	SC_MEMSTRUCT
 
 -- USAGE values          -- how symbol has been used (1,2 can be OR'd)
 export enum
@@ -341,7 +359,7 @@ export type symtab_index(integer x)
 		return FALSE
 	end if
 	return find(length(SymTab[x]), {SIZEOF_VAR_ENTRY, SIZEOF_ROUTINE_ENTRY,
-						  SIZEOF_TEMP_ENTRY, SIZEOF_BLOCK_ENTRY})
+						  SIZEOF_TEMP_ENTRY, SIZEOF_BLOCK_ENTRY, SIZEOF_MEMSTRUCT_ENTRY})
 end type
 
 export type temp_index(integer x)
@@ -382,7 +400,7 @@ export type token(object t)
 		end if
 		return TRUE
 	end if
-	if FUNC <= t[T_ID] and t[T_ID] <= NAMESPACE then
+	if FUNC <= t[T_ID] and t[T_ID] < LAST_TOKEN then
 		return TRUE
 	end if
 	return FALSE

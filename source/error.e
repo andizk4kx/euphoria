@@ -9,6 +9,10 @@ elsedef
 	without type_check
 end ifdef
 
+ifdef CRASH_ON_ERROR then
+	include std/error.e
+end ifdef
+
 include std/io.e
 include std/text.e
 include std/filesys.e
@@ -296,7 +300,7 @@ export procedure CompileErr(object msg, object args = {}, integer preproc = 0 )
 		close(TempErrFile)
 		TempErrFile = -2
 		ifdef CRASH_ON_ERROR then
-			display( call_stack() )
+			crash("Crashing on compiler error for internal traceback")
 		end ifdef
 		Cleanup(1)
 	end if
@@ -312,14 +316,19 @@ end procedure
 --**
 -- Handles internal compile-time errors
 -- see RTInternal() for run-time internal errors
-export procedure InternalErr(integer  msgno, object args = {})
+export procedure InternalErr(object  msgno, object args = {})
 
 	sequence msg
 	if atom(args) then
 		args = {args}
 	end if
-
-	msg = GetMsgText(msgno, 1, args)
+	
+	if atom( msgno ) then
+		msg = GetMsgText(msgno, 1, args)
+	else
+		msg = format(msgno, args)
+	end if
+	
 	if TRANSLATE then
 		screen_output(STDERR, GetMsgText(INTERNAL_ERRORT1, 1, {msg}))
 	else
